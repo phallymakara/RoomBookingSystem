@@ -196,3 +196,68 @@ export async function setFloorLabels(token, building, labels /* [{level, label}]
         if (!res.ok && res.status !== 204) return handle(res);
         return true;
 }
+
+/* === Floors & Rooms (Admin) === */
+function authJson(token) {
+        return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+}
+
+// floors
+export async function listFloors(token) {
+        const res = await fetch(`${BASE}/floors`, { headers: { Authorization: `Bearer ${token}` } });
+        return handle(res);
+}
+export async function getFloorRooms(token, floorId) {
+        const res = await fetch(`${BASE}/floors/${floorId}`, { headers: { Authorization: `Bearer ${token}` } });
+        return handle(res);
+}
+export async function createFloor(token, { name }) {
+        const res = await fetch(`${BASE}/floors`, {
+                method: 'POST',
+                headers: auth(token),
+                body: JSON.stringify({ name })
+        });
+        return handle(res);
+}
+export async function updateFloor(token, id, { name }) {
+        const res = await fetch(`${BASE}/floors/${id}`, {
+                method: 'PUT',
+                headers: auth(token),
+                body: JSON.stringify({ name })
+        });
+        return handle(res);
+}
+export async function deleteFloor(token, id) {
+        const res = await fetch(`${BASE}/floors/${id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.status === 204) return true;
+        return handle(res);
+}
+
+// rooms (under floor)
+export async function createRoomInFloor(token, floorId, { name, capacity }) {
+        const res = await fetch(`${BASE}/floors/${floorId}/rooms`, {
+                method: 'POST',
+                headers: auth(token),
+                body: JSON.stringify({ name, capacity })
+        });
+        return handle(res);
+}
+export async function updateRoom(token, roomId, data) {
+        const res = await fetch(`${BASE}/floors/rooms/${roomId}`, {
+                method: 'PUT',
+                headers: auth(token),
+                body: JSON.stringify(data)
+        });
+        return handle(res);
+}
+export async function deleteRoom(token, roomId) {
+        const res = await fetch(`${BASE}/floors/rooms/${roomId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.status === 204) return true;
+        return handle(res);
+}

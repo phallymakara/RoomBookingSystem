@@ -8,6 +8,7 @@ import Register from './pages/Register.jsx';
 
 import AdminLayout from './pages/admin/AdminLayout.jsx';
 import AdminOverview from './pages/admin/Overview.jsx';
+import AdminFloors from './pages/admin/AdminFloors.jsx';
 import AdminVisualisation from './pages/admin/Visualisation.jsx';
 import AdminRooms from './pages/admin/AdminRooms.jsx';
 import AdminRequests from './pages/admin/AdminRequests.jsx';
@@ -71,6 +72,7 @@ export default function App() {
           <Route path="overview" element={<AdminOverview />} />
           <Route path="visualisation" element={<AdminVisualisation />} />
           <Route path="settings" element={<AdminSettings />} />
+          <Route path="floors" element={<AdminFloors />} />
           <Route path="rooms" element={<AdminRooms />} />
           <Route path="requests" element={<AdminRequests />} />
         </Route>

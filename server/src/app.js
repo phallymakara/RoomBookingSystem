@@ -3,6 +3,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import floorsRouter from './routes/floors.js';
 import { prisma } from './lib/prisma.js';
 import authRouter from './routes/auth.js';
 import roomsRouter from './routes/rooms.js';
@@ -17,6 +18,7 @@ app.use(morgan('dev'));
 app.get('/health', (_, res) => res.json({ ok: true }));
 
 app.use('/auth', authRouter);
+app.use('/floors', floorsRouter);
 app.use('/rooms', roomsRouter);
 app.use('/bookings', bookingsRouter); // <-- add this
 

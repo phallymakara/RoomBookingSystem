@@ -41,40 +41,45 @@ model User {
 }
 
 model Room {
-  id        String         @id @default(cuid())
-  name      String         @unique
-  building  String
-  floor     Int
-  capacity  Int
-  equipment Json
+  id        String   @id @default(cuid())
+  name      String
+  capacity  Int      @default(4)
+  equipment Json     @default("{}")
   photoUrl  String?
-  isActive  Boolean        @default(true)
-  bookings  Booking[]
-  openHours RoomOpenHour[] // weekly schedule
-  closures  RoomClosure[] // special closures
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  floorId String
+  floor   Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+
+  bookings Booking[]
+
+  // <-- ADD: back-relations for open hours & closures
+  openHours RoomOpenHour[]
+  closures  RoomClosure[]
+
+  @@unique([floorId, name]) // room name is unique only within a floor
+  @@index([floorId])
 }
 
 model Booking {
-  id               String        @id @default(cuid())
-  roomId           String
-  userId           String
-  startTs          DateTime // keep as DateTime; if you use timestamptz, add: @db.Timestamptz(6)
-  endTs            DateTime
-  status           BookingStatus @default(PENDING) // requests start as PENDING
-  reason           String? // student’s request reason
-  cancelReason     String?
-  cancelledAt      DateTime?
-  decisionAt       DateTime?
-  decisionNote     String?
-  decisionByUserId String?
-  createdAt        DateTime      @default(now())
+  id        String        @id @default(cuid())
+  roomId    String
+  userId    String
+  startTs   DateTime
+  endTs     DateTime
+  status    BookingStatus @default(CONFIRMED)
+  createdAt DateTime      @default(now())
 
-  room          Room                @relation(fields: [roomId], references: [id])
-  user          User                @relation(fields: [userId], references: [id])
-  decisionBy    User?               @relation("DecisionBy", fields: [decisionByUserId], references: [id])
-  notifications AdminNotification[]
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id])
+
+  // <-- ADD: back-rel for User.decisions ("DecisionBy")
+  decidedById String?
+  decidedBy   User?   @relation("DecisionBy", fields: [decidedById], references: [id])
+
+  // <-- ADD: back-rel for AdminNotification.booking
+  adminNotifications AdminNotification[]
 
   @@index([roomId, startTs, endTs])
 }
@@ -125,4 +130,11 @@ model Policy {
   id    String @id @default(cuid())
   key   String @unique
   value String
+}
+
+model Floor {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  rooms     Room[]
+  createdAt DateTime @default(now())
 }

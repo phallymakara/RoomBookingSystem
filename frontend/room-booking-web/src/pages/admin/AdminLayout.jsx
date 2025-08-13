@@ -16,6 +16,7 @@ export default function AdminLayout() {
                                                 <AdminLink to="/admin/overview" icon="bi-speedometer2">Overview</AdminLink>
                                                 <AdminLink to="/admin/visualisation" icon="bi-bar-chart">Visualisation</AdminLink>
                                                 <AdminLink to="/admin/rooms" icon="bi-door-closed">Rooms</AdminLink>
+                                                <AdminLink to="/admin/floors" icon="bi-building">Floors</AdminLink>
                                                 <AdminLink to="/admin/requests" icon="bi-inboxes">Request</AdminLink>
                                                 <AdminLink to="/admin/settings" icon="bi-gear">Setting</AdminLink>
                                         </nav>
