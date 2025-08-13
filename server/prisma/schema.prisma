@@ -1,0 +1,128 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ===================== Enums =====================
+ */
+
+enum Role {
+  STUDENT
+  ADMIN
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  REJECTED
+}
+
+/**
+ * ===================== Models =====================
+ */
+
+model User {
+  id        String    @id @default(cuid())
+  name      String
+  email     String    @unique
+  password  String
+  role      Role      @default(STUDENT)
+  createdAt DateTime  @default(now())
+  bookings  Booking[]
+  decisions Booking[] @relation("DecisionBy") // bookings this user decided (approved/rejected)
+}
+
+model Room {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  building  String
+  floor     Int
+  capacity  Int
+  equipment Json
+  photoUrl  String?
+  isActive  Boolean        @default(true)
+  bookings  Booking[]
+  openHours RoomOpenHour[] // weekly schedule
+  closures  RoomClosure[] // special closures
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+}
+
+model Booking {
+  id               String        @id @default(cuid())
+  roomId           String
+  userId           String
+  startTs          DateTime // keep as DateTime; if you use timestamptz, add: @db.Timestamptz(6)
+  endTs            DateTime
+  status           BookingStatus @default(PENDING) // requests start as PENDING
+  reason           String? // student’s request reason
+  cancelReason     String?
+  cancelledAt      DateTime?
+  decisionAt       DateTime?
+  decisionNote     String?
+  decisionByUserId String?
+  createdAt        DateTime      @default(now())
+
+  room          Room                @relation(fields: [roomId], references: [id])
+  user          User                @relation(fields: [userId], references: [id])
+  decisionBy    User?               @relation("DecisionBy", fields: [decisionByUserId], references: [id])
+  notifications AdminNotification[]
+
+  @@index([roomId, startTs, endTs])
+}
+
+/**
+ * Campus weekly open hours (per room, per weekday)
+ */
+model RoomOpenHour {
+  id        String @id @default(cuid())
+  roomId    String
+  weekday   Int // 0=Sun ... 6=Sat
+  startHHMM String // "08:00"
+  endHHMM   String // "22:00"
+
+  room Room @relation(fields: [roomId], references: [id])
+}
+
+/**
+ * Special closures (whole-day ranges)
+ */
+model RoomClosure {
+  id        String   @id @default(cuid())
+  roomId    String
+  startDate DateTime // treat as whole-day start (UTC 00:00)
+  endDate   DateTime // whole-day end (UTC 23:59:59)
+  reason    String?
+  room      Room     @relation(fields: [roomId], references: [id])
+
+  @@index([roomId, startDate, endDate])
+}
+
+/**
+ * Optional: simple admin notifications (e.g., for new booking requests)
+ */
+model AdminNotification {
+  id        String    @id @default(cuid())
+  type      String // e.g., "BOOKING_REQUEST"
+  bookingId String?
+  createdAt DateTime  @default(now())
+  readAt    DateTime?
+  booking   Booking?  @relation(fields: [bookingId], references: [id])
+}
+
+/**
+ * Keep if you already use it for global settings
+ */
+model Policy {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
