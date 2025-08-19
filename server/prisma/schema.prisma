@@ -9,9 +9,7 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * ===================== Enums =====================
- */
+/* ===================== Enums ===================== */
 
 enum Role {
   STUDENT
@@ -25,9 +23,7 @@ enum BookingStatus {
   REJECTED
 }
 
-/**
- * ===================== Models =====================
- */
+/* ===================== Models ===================== */
 
 model User {
   id        String    @id @default(cuid())
@@ -36,8 +32,31 @@ model User {
   password  String
   role      Role      @default(STUDENT)
   createdAt DateTime  @default(now())
+
+  // relations
   bookings  Booking[]
   decisions Booking[] @relation("DecisionBy") // bookings this user decided (approved/rejected)
+}
+
+model Building {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  floors    Floor[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Floor {
+  id          String    @id @default(cuid())
+  name        String
+  buildingId  String
+  building    Building  @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  rooms       Room[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([buildingId, name]) // floor name unique within a building
 }
 
 model Room {
@@ -46,19 +65,19 @@ model Room {
   capacity  Int      @default(4)
   equipment Json     @default("{}")
   photoUrl  String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  floorId String
-  floor   Floor  @relation(fields: [floorId], references: [id], onDelete: Cascade)
+  floorId   String
+  floor     Floor    @relation(fields: [floorId], references: [id], onDelete: Cascade)
 
-  bookings Booking[]
+  // relations
+  bookings   Booking[]
+  openHours  RoomOpenHour[]
+  closures   RoomClosure[]
 
-  // <-- ADD: back-relations for open hours & closures
-  openHours RoomOpenHour[]
-  closures  RoomClosure[]
-
-  @@unique([floorId, name]) // room name is unique only within a floor
+  @@unique([floorId, name]) // room name unique within a floor
   @@index([floorId])
 }
 
@@ -74,67 +93,54 @@ model Booking {
   room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id])
 
-  // <-- ADD: back-rel for User.decisions ("DecisionBy")
+  // back-rel for User.decisions ("DecisionBy")
   decidedById String?
-  decidedBy   User?   @relation("DecisionBy", fields: [decidedById], references: [id])
+  decidedBy   User?   @relation("DecisionBy", fields: [decidedById], references: [id], onDelete: SetNull)
 
-  // <-- ADD: back-rel for AdminNotification.booking
+  // back-rel for AdminNotification.booking
   adminNotifications AdminNotification[]
 
   @@index([roomId, startTs, endTs])
 }
 
-/**
- * Campus weekly open hours (per room, per weekday)
- */
+/** Campus weekly open hours (per room, per weekday) */
 model RoomOpenHour {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   roomId    String
-  weekday   Int // 0=Sun ... 6=Sat
-  startHHMM String // "08:00"
-  endHHMM   String // "22:00"
+  weekday   Int     // 0=Sun ... 6=Sat
+  startHHMM String  // "08:00"
+  endHHMM   String  // "22:00"
 
-  room Room @relation(fields: [roomId], references: [id])
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
 }
 
-/**
- * Special closures (whole-day ranges)
- */
+/** Special closures (whole-day ranges) */
 model RoomClosure {
   id        String   @id @default(cuid())
   roomId    String
   startDate DateTime // treat as whole-day start (UTC 00:00)
   endDate   DateTime // whole-day end (UTC 23:59:59)
   reason    String?
-  room      Room     @relation(fields: [roomId], references: [id])
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@index([roomId, startDate, endDate])
 }
 
-/**
- * Optional: simple admin notifications (e.g., for new booking requests)
- */
+/** Optional: simple admin notifications (e.g., for new booking requests) */
 model AdminNotification {
   id        String    @id @default(cuid())
-  type      String // e.g., "BOOKING_REQUEST"
+  type      String    // e.g., "BOOKING_REQUEST"
   bookingId String?
   createdAt DateTime  @default(now())
   readAt    DateTime?
-  booking   Booking?  @relation(fields: [bookingId], references: [id])
+
+  booking   Booking?  @relation(fields: [bookingId], references: [id], onDelete: SetNull)
 }
 
-/**
- * Keep if you already use it for global settings
- */
+/** Keep if you already use it for global settings */
 model Policy {
   id    String @id @default(cuid())
   key   String @unique
   value String
-}
-
-model Floor {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  rooms     Room[]
-  createdAt DateTime @default(now())
 }

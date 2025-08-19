@@ -12,8 +12,8 @@ export default function NavBar({ authed, user, onLogout }) {
                                         <img
                                                 src="/ams.png"
                                                 alt="Department logo"
-                                                width="80"
-                                                height="40"
+                                                width="70"
+                                                height="30"
                                                 className="me-2"
                                                 style={{ objectFit: 'contain' }}
                                         />

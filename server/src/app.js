@@ -8,6 +8,7 @@ import { prisma } from './lib/prisma.js';
 import authRouter from './routes/auth.js';
 import roomsRouter from './routes/rooms.js';
 import bookingsRouter from './routes/bookings.js'; // <-- add this
+import buildingsRouter from './routes/buildings.js';
 import { authGuard } from './authGuard.js';
 
 const app = express();
@@ -20,6 +21,7 @@ app.get('/health', (_, res) => res.json({ ok: true }));
 app.use('/auth', authRouter);
 app.use('/floors', floorsRouter);
 app.use('/rooms', roomsRouter);
+app.use('/buildings', buildingsRouter);
 app.use('/bookings', bookingsRouter); // <-- add this
 
 // Example protected route

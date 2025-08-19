@@ -32,8 +32,7 @@ export async function register(name, email, password) {
         return data;
 }
 
-
-/* ---------- rooms ---------- */
+/* ---------- rooms (public) ---------- */
 export async function getRooms(query = {}) {
         const qs = new URLSearchParams(query).toString();
         const res = await fetch(`${BASE}/rooms${qs ? `?${qs}` : ''}`);
@@ -55,7 +54,6 @@ export async function getAvailability(
 }
 
 /* ---------- bookings (student) ---------- */
-// Approval flow: students send a REQUEST (PENDING) with a reason
 export async function requestBooking(token, { roomId, startTs, endTs, reason }) {
         const res = await fetch(`${BASE}/bookings/request`, {
                 method: 'POST',
@@ -76,12 +74,13 @@ export async function cancelBooking(token, bookingId, reason) {
 }
 
 export async function getMyBookings(token) {
-        const res = await fetch(`${BASE}/bookings/my/list`, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch(`${BASE}/bookings/my/list`, {
+                headers: { Authorization: `Bearer ${token}` }
+        });
         return handle(res);
 }
 
 /* ---------- bookings (admin) ---------- */
-// Optional: admin can still create a confirmed booking directly
 export async function createBooking(token, { roomId, startTs, endTs }) {
         const res = await fetch(`${BASE}/bookings`, {
                 method: 'POST',
@@ -152,9 +151,11 @@ export async function getRoomClosures(token, roomId, { from, to } = {}) {
         return handle(res);
 }
 
-
-/* ---------- admin rooms ---------- */
-export async function adminCreateRoom(token, { name, building, floor, capacity, equipment = {}, photoUrl, isActive = true }) {
+/* ---------- admin rooms (legacy endpoints; safe to keep) ---------- */
+export async function adminCreateRoom(
+        token,
+        { name, building, floor, capacity, equipment = {}, photoUrl, isActive = true }
+) {
         const res = await fetch(`${BASE}/rooms`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -173,20 +174,18 @@ export async function adminDeleteRoom(token, roomId, { hard = false } = {}) {
         return true;
 }
 
-/* ---------- floors & grouping ---------- */
+/* ---------- optional grouping/labels (if your server supports them) ---------- */
 export async function getGroupedRooms(building /* optional */) {
         const qs = new URLSearchParams();
         if (building) qs.set('building', building);
         const res = await fetch(`${BASE}/rooms/grouped${qs.toString() ? `?${qs}` : ''}`);
-        return handle(res); // [{ building, floor, label, rooms: [...] }, ...]
+        return handle(res);
 }
-
 export async function getFloorLabels(building) {
         const qs = new URLSearchParams({ building });
         const res = await fetch(`${BASE}/rooms/floor-labels?${qs.toString()}`);
-        return handle(res); // { "1": "First Floor", ... } or {}
+        return handle(res);
 }
-
 export async function setFloorLabels(token, building, labels /* [{level, label}] */) {
         const res = await fetch(`${BASE}/rooms/floor-labels`, {
                 method: 'PUT',
@@ -197,25 +196,58 @@ export async function setFloorLabels(token, building, labels /* [{level, label}]
         return true;
 }
 
-/* === Floors & Rooms (Admin) === */
-function authJson(token) {
-        return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-}
+/* ======================================================================
+   BUILDINGS + FLOORS + ROOMS (SCOPED)
+   ====================================================================== */
 
-// floors
-export async function listFloors(token) {
-        const res = await fetch(`${BASE}/floors`, { headers: { Authorization: `Bearer ${token}` } });
+/* ---------- BUILDINGS ---------- */
+export async function listBuildings(token) {
+        const res = await fetch(`${BASE}/buildings`, {
+                headers: { Authorization: `Bearer ${token}` }
+        });
         return handle(res);
 }
-export async function getFloorRooms(token, floorId) {
-        const res = await fetch(`${BASE}/floors/${floorId}`, { headers: { Authorization: `Bearer ${token}` } });
-        return handle(res);
-}
-export async function createFloor(token, { name }) {
-        const res = await fetch(`${BASE}/floors`, {
+export async function createBuilding(token, { name }) {
+        const res = await fetch(`${BASE}/buildings`, {
                 method: 'POST',
                 headers: auth(token),
                 body: JSON.stringify({ name })
+        });
+        return handle(res);
+}
+export async function updateBuilding(token, id, { name }) {
+        const res = await fetch(`${BASE}/buildings/${id}`, {
+                method: 'PUT',
+                headers: auth(token),
+                body: JSON.stringify({ name })
+        });
+        return handle(res);
+}
+export async function deleteBuilding(token, id) {
+        const res = await fetch(`${BASE}/buildings/${id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.status === 204) return true;
+        return handle(res);
+}
+
+/* ---------- FLOORS (scoped by building) ---------- */
+// list floors; pass buildingId to filter
+export async function listFloors(token, buildingId) {
+        const qs = new URLSearchParams();
+        if (buildingId) qs.set('buildingId', buildingId);
+        const res = await fetch(`${BASE}/floors${qs.toString() ? `?${qs}` : ''}`, {
+                headers: { Authorization: `Bearer ${token}` }
+        });
+        return handle(res);
+}
+// create floor UNDER a building (buildingId is required by server)
+export async function createFloor(token, { buildingId, name }) {
+        const res = await fetch(`${BASE}/floors`, {
+                method: 'POST',
+                headers: auth(token),
+                body: JSON.stringify({ buildingId, name })
         });
         return handle(res);
 }
@@ -236,7 +268,13 @@ export async function deleteFloor(token, id) {
         return handle(res);
 }
 
-// rooms (under floor)
+/* ---------- ROOMS (under a floor) ---------- */
+export async function getFloorRooms(token, floorId) {
+        const res = await fetch(`${BASE}/floors/${floorId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+        });
+        return handle(res); // { floor, rooms: [...] }
+}
 export async function createRoomInFloor(token, floorId, { name, capacity }) {
         const res = await fetch(`${BASE}/floors/${floorId}/rooms`, {
                 method: 'POST',
