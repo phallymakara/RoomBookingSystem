@@ -4,6 +4,17 @@ export default function Overview() {
                         {/* ---------------- Overview Section ---------------- */}
                         <h2 className="h4 mb-3">Overview</h2>
                         <div className="row g-3">
+                                {/* Total Buildings */}
+                                <div className="col-12 col-md-6 col-xl-3">
+                                        <div className="card shadow-sm border-0 h-100">
+                                                <div className="card-body">
+                                                        <div className="text-secondary small">Total Buildings</div>
+                                                        <div className="display-6 fw-bold">—</div>
+                                                </div>
+                                        </div>
+                                </div>
+
+                                {/* Total Rooms */}
                                 <div className="col-12 col-md-6 col-xl-3">
                                         <div className="card shadow-sm border-0 h-100">
                                                 <div className="card-body">
@@ -12,14 +23,8 @@ export default function Overview() {
                                                 </div>
                                         </div>
                                 </div>
-                                <div className="col-12 col-md-6 col-xl-3">
-                                        <div className="card shadow-sm border-0 h-100">
-                                                <div className="card-body">
-                                                        <div className="text-secondary small">Pending Requests</div>
-                                                        <div className="display-6 fw-bold">—</div>
-                                                </div>
-                                        </div>
-                                </div>
+
+                                {/* Approved Today */}
                                 <div className="col-12 col-md-6 col-xl-3">
                                         <div className="card shadow-sm border-0 h-100">
                                                 <div className="card-body">
@@ -28,6 +33,8 @@ export default function Overview() {
                                                 </div>
                                         </div>
                                 </div>
+
+                                {/* Cancelled */}
                                 <div className="col-12 col-md-6 col-xl-3">
                                         <div className="card shadow-sm border-0 h-100">
                                                 <div className="card-body">

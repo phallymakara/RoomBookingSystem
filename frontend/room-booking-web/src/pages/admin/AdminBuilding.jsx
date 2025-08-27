@@ -66,11 +66,162 @@ export default function AdminFloors() {
 
         // Create Room form
         const [rName, setRName] = useState('');
-        const [rCap, setRCap] = useState(4);
+        const [rCap, setRCap] = useState('');
+
+        // Edit Room Form
+        const [editRoomId, setEditRoomId] = useState(null);
+        const [editName, setEditName] = useState('');
+        const [editCap, setEditCap] = useState('');
+
+        const [editNameId, setEditNameId] = useState(null);
+        const [editNameVal, setEditNameVal] = useState('');
+        const [editCapId, setEditCapId] = useState(null);
+        const [editCapVal, setEditCapVal] = useState('');
+
+        // ADD — projector create-state
+        const [rProj, setRProj] = useState('none'); // 'have' | 'none'
+        // ADD — inline edit state for projector
+        const [editProjId, setEditProjId] = useState(null);
+        const [editProjVal, setEditProjVal] = useState('none');
+
 
         // -----------------------------------------------------------
         // Data loaders
         // -----------------------------------------------------------
+
+        // start editing a row  ← ADD
+        function startEditRoom(r) {
+                setEditRoomId(r.id);
+                setEditName(r.name);
+                setEditCap(String(r.capacity));
+        }
+
+        // cancel editing  ← ADD
+        function cancelEditRoom() {
+                setEditRoomId(null);
+                setEditName('');
+                setEditCap('');
+        }
+
+        // save changes (name & capacity)  ← ADD
+        async function saveEditRoom(e) {
+                e?.preventDefault?.();
+                if (!editRoomId) return;
+                try {
+                        await updateRoom(token, editRoomId, {
+                                name: editName.trim(),
+                                capacity: Number(editCap),
+                        });
+                        cancelEditRoom();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Save failed');
+                }
+        }
+
+        // delete while editing  ← ADD
+        async function deleteEditingRoom() {
+                if (!editRoomId) return;
+                const r = rooms.find(x => x.id === editRoomId);
+                if (!window.confirm(`Delete room "${r?.name || ''}"?`)) return;
+                try {
+                        await deleteRoom(token, editRoomId);
+                        cancelEditRoom();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Delete failed');
+                }
+        }
+
+        // Start editing NAME only  ← ADD
+        function startEditName(r) {
+                setEditCapId(null);
+                setEditNameId(r.id);
+                setEditNameVal(r.name);
+        }
+
+        // Start editing CAPACITY only  ← ADD
+        function startEditCap(r) {
+                setEditNameId(null);
+                setEditCapId(r.id);
+                setEditCapVal(String(r.capacity));
+        }
+
+        function cancelInlineEdit() {
+                setEditNameId(null);
+                setEditCapId(null);
+                setEditProjId(null);
+                setEditNameVal('');
+                setEditCapVal('');
+                setEditProjVal('none');
+        }
+
+        function startEditProjector(r) {
+                setEditNameId(null);
+                setEditCapId(null);
+                setEditProjId(r.id);
+                setEditProjVal(r?.equipment?.projector ? 'have' : 'none');
+        }
+
+        async function saveProjInline(e) {
+                e?.preventDefault?.();
+                if (!editProjId) return;
+                try {
+                        const currentEq = rooms.find(r => r.id === editProjId)?.equipment || {};
+                        const nextEq = { ...currentEq, projector: editProjVal === 'have' };
+                        await updateRoom(token, editProjId, { equipment: nextEq });
+                        cancelInlineEdit();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Save failed');
+                }
+        }
+
+
+        // Save edited name  ← ADD
+        async function saveNameInline(e) {
+                e?.preventDefault?.();
+                if (!editNameId) return;
+                try {
+                        await updateRoom(token, editNameId, { name: editNameVal.trim() });
+                        cancelInlineEdit();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Save failed');
+                }
+        }
+
+        // Save edited capacity  ← ADD
+        async function saveCapInline(e) {
+                e?.preventDefault?.();
+                if (!editCapId) return;
+                try {
+                        await updateRoom(token, editCapId, { capacity: Number(editCapVal) });
+                        cancelInlineEdit();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Save failed');
+                }
+        }
+
+        // Delete room while editing (works for either name/capacity edit)  ← ADD
+        async function deleteInlineRoom() {
+                const targetId = editNameId || editCapId;
+                if (!targetId) return;
+                const r = rooms.find(x => x.id === targetId);
+                if (!window.confirm(`Delete room "${r?.name || ''}"?`)) return;
+                try {
+                        await deleteRoom(token, targetId);
+                        cancelInlineEdit();
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (err) {
+                        alert(err.message || 'Delete failed');
+                }
+        }
+
+
+
+
         async function loadBuildings() {
                 try {
                         setErr('');
@@ -248,8 +399,12 @@ export default function AdminFloors() {
                         await createRoomInFloor(token, selectedFloor.id, {
                                 name: rName.trim(),
                                 capacity: Number(rCap),
+                                equipment: { projector: rProj === 'have' }
+
                         });
                         setRName('');
+                        setRCap('');
+                        setRProj('none');
                         await loadRoomsForFloor(selectedFloor.id);
                 } catch (e) {
                         alert(e.message || 'Create room failed');
@@ -287,6 +442,24 @@ export default function AdminFloors() {
                         alert(e.message || 'Delete room failed');
                 }
         }
+
+        // --- add this new handler somewhere with the other room handlers ---
+        async function onChangeProjector(room) {
+                const current = room?.equipment?.projector ? 'have' : 'none';
+                const input = window.prompt('Projector (type "have" or "none"):', current);
+                if (!input) return;
+                const normalized = String(input).trim().toLowerCase();
+                const projector = normalized === 'have' || normalized === 'h' || normalized === 'yes' || normalized === 'y' || normalized === 'true';
+                try {
+                        await updateRoom(token, room.id, {
+                                equipment: { ...(room.equipment || {}), projector } // merge
+                        });
+                        await loadRoomsForFloor(selectedFloor.id);
+                } catch (e) {
+                        alert(e.message || 'Update projector failed');
+                }
+        }
+
 
         // -----------------------------------------------------------
         // Render
@@ -364,6 +537,7 @@ export default function AdminFloors() {
                                                                         </form>
                                                                 </div>
                                                         </div>
+
 
                                                         {/* Create Floor (under current building) */}
                                                         <form className="border rounded-3 p-2 mt-2" onSubmit={onCreateFloor}>
@@ -476,7 +650,7 @@ export default function AdminFloors() {
                                                                                                 className="form-control"
                                                                                                 value={rName}
                                                                                                 onChange={e => setRName(e.target.value)}
-                                                                                                placeholder="A101"
+                                                                                                placeholder="Add Room Name"
                                                                                                 required
                                                                                         />
                                                                                 </div>
@@ -487,11 +661,29 @@ export default function AdminFloors() {
                                                                                                 className="form-control"
                                                                                                 value={rCap}
                                                                                                 onChange={e => setRCap(e.target.value)}
+                                                                                                placeholder='Capacity'
                                                                                                 min={1}
                                                                                                 max={999}
                                                                                                 required
                                                                                         />
                                                                                 </div>
+
+
+                                                                                {/* Input Field Projector Have Or None */}
+
+                                                                                <div className="col-12 col-md-2 col-lg-2">
+                                                                                        <label className="form-label">Projector</label>
+                                                                                        <select
+                                                                                                className="form-select"
+                                                                                                value={rProj}
+                                                                                                onChange={(e) => setRProj(e.target.value)}
+                                                                                        >
+                                                                                                <option value="have">Have</option>
+                                                                                                <option value="none">None</option>
+                                                                                        </select>
+                                                                                </div>
+
+
                                                                         </form>
                                                                 </>
                                                         )}
@@ -506,32 +698,112 @@ export default function AdminFloors() {
                                                                                         <tr>
                                                                                                 <th style={{ width: 220 }}>Name</th>
                                                                                                 <th style={{ width: 140 }}>Capacity</th>
-                                                                                                <th style={{ width: 220 }}></th>
+                                                                                                <th style={{ width: 120 }}>Projector</th> {/* ← ADD */}
+
                                                                                         </tr>
                                                                                 </thead>
                                                                                 <tbody>
                                                                                         {rooms.length === 0 ? (
                                                                                                 <tr>
                                                                                                         <td colSpan={3} className="text-secondary">No rooms yet.</td>
+
                                                                                                 </tr>
                                                                                         ) : (
                                                                                                 rooms.map(r => (
                                                                                                         <tr key={r.id}>
-                                                                                                                <td>{r.name}</td>
-                                                                                                                <td>{r.capacity}</td>
-                                                                                                                <td className="text-end">
-                                                                                                                        <div className="btn-group btn-group-sm">
-                                                                                                                                <button className="btn btn-outline-secondary" onClick={() => onRenameRoom(r)}>
-                                                                                                                                        Rename
-                                                                                                                                </button>
-                                                                                                                                <button className="btn btn-outline-secondary" onClick={() => onChangeCap(r)}>
-                                                                                                                                        Capacity
-                                                                                                                                </button>
-                                                                                                                                <button className="btn btn-outline-danger" onClick={() => onDeleteRoomClick(r)}>
-                                                                                                                                        Delete
-                                                                                                                                </button>
-                                                                                                                        </div>
+                                                                                                                {/* NAME cell (click to edit) */}  {/* ← REPLACE */}
+                                                                                                                {/* NAME cell — click to edit name ONLY */}  {/* ← REPLACE */}
+                                                                                                                <td
+                                                                                                                        onClick={() => startEditName(r)}
+                                                                                                                        style={{ cursor: 'pointer', width: 220 }}
+                                                                                                                >
+                                                                                                                        {editNameId === r.id ? (
+                                                                                                                                <div className="d-flex align-items-center gap-2">
+                                                                                                                                        <input
+                                                                                                                                                className="form-control form-control-sm rounded-3 shadow-sm"
+                                                                                                                                                value={editNameVal}
+                                                                                                                                                onChange={(e) => setEditNameVal(e.target.value)}
+                                                                                                                                                autoFocus
+                                                                                                                                                onKeyDown={(e) => {
+                                                                                                                                                        if (e.key === 'Enter') saveNameInline();
+                                                                                                                                                        if (e.key === 'Escape') cancelInlineEdit();
+                                                                                                                                                }}
+                                                                                                                                        />
+                                                                                                                                        <div className="btn-group btn-group-sm">
+                                                                                                                                                <button className="btn btn-primary" onClick={saveNameInline}>Save</button>
+                                                                                                                                                <button className="btn btn-outline-danger" onClick={deleteInlineRoom}>Delete</button>
+                                                                                                                                        </div>
+                                                                                                                                </div>
+                                                                                                                        ) : (
+                                                                                                                                r.name
+                                                                                                                        )}
                                                                                                                 </td>
+
+
+                                                                                                                {/* CAPACITY cell — click to edit capacity ONLY */}
+                                                                                                                <td
+                                                                                                                        onClick={() => startEditCap(r)}
+                                                                                                                        style={{ cursor: 'pointer', width: 140 }}
+                                                                                                                >
+                                                                                                                        {editCapId === r.id ? (
+                                                                                                                                <div
+                                                                                                                                        className="d-flex align-items-center gap-2"
+                                                                                                                                        onClick={(e) => e.stopPropagation()} // don’t re-trigger cell click
+                                                                                                                                >
+                                                                                                                                        <input
+                                                                                                                                                type="number"
+                                                                                                                                                min={1}
+                                                                                                                                                max={999}
+                                                                                                                                                className="form-control form-control-sm rounded-3 shadow-sm"
+                                                                                                                                                value={editCapVal}
+                                                                                                                                                onChange={(e) => setEditCapVal(e.target.value)}
+                                                                                                                                                autoFocus
+                                                                                                                                                onKeyDown={(e) => {
+                                                                                                                                                        if (e.key === 'Enter') saveCapInline();
+                                                                                                                                                        if (e.key === 'Escape') cancelInlineEdit();
+                                                                                                                                                }}
+                                                                                                                                        />
+                                                                                                                                        <div className="btn-group btn-group-sm">
+                                                                                                                                                <button type="button" className="btn btn-primary" onClick={saveCapInline}>
+                                                                                                                                                        Save
+                                                                                                                                                </button>
+                                                                                                                                        </div>
+                                                                                                                                </div>
+                                                                                                                        ) : (
+                                                                                                                                r.capacity
+                                                                                                                        )}
+                                                                                                                </td>
+
+                                                                                                                <td
+                                                                                                                        onClick={() => startEditProjector(r)}
+                                                                                                                        style={{ cursor: 'pointer', width: 160 }}
+                                                                                                                >
+                                                                                                                        {editProjId === r.id ? (
+                                                                                                                                <div className="d-flex align-items-center gap-2">
+                                                                                                                                        <select
+                                                                                                                                                className="form-select form-select-sm rounded-3 shadow-sm"
+                                                                                                                                                value={editProjVal}
+                                                                                                                                                onChange={(e) => setEditProjVal(e.target.value)}
+                                                                                                                                                autoFocus
+                                                                                                                                                onKeyDown={(e) => {
+                                                                                                                                                        if (e.key === 'Enter') saveProjInline();
+                                                                                                                                                        if (e.key === 'Escape') cancelInlineEdit();
+                                                                                                                                                }}
+                                                                                                                                        >
+                                                                                                                                                <option value="none">None</option>
+                                                                                                                                                <option value="have">Have</option>
+                                                                                                                                        </select>
+                                                                                                                                        <div className="btn-group btn-group-sm">
+                                                                                                                                                <button className="btn btn-primary" onClick={saveProjInline}>Save</button>
+                                                                                                                                        </div>
+                                                                                                                                </div>
+                                                                                                                        ) : (
+                                                                                                                                r?.equipment?.projector ? 'Have' : 'None'
+                                                                                                                        )}
+                                                                                                                </td>
+
+
+
                                                                                                         </tr>
                                                                                                 ))
                                                                                         )}
