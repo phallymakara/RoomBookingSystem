@@ -8,8 +8,8 @@ import Register from './pages/Register.jsx';
 
 import AdminLayout from './pages/admin/AdminLayout.jsx';
 import AdminOverview from './pages/admin/Overview.jsx';
-import AdminFloors from './pages/admin/AdminFloors.jsx';
-import AdminVisualisation from './pages/admin/Visualisation.jsx';
+import AdminFloors from './pages/admin/AdminBuilding.jsx';
+import AdminVisualisation from './pages/admin/historys.jsx';
 import AdminRooms from './pages/admin/AdminRooms.jsx';
 import AdminRequests from './pages/admin/AdminRequests.jsx';
 import AdminSettings from './pages/admin/Settings.jsx';
@@ -70,7 +70,7 @@ export default function App() {
         >
           <Route index element={<AdminOverview />} />
           <Route path="overview" element={<AdminOverview />} />
-          <Route path="visualisation" element={<AdminVisualisation />} />
+          <Route path="historys" element={<AdminVisualisation />} />
           <Route path="settings" element={<AdminSettings />} />
           <Route path="floors" element={<AdminFloors />} />
           <Route path="rooms" element={<AdminRooms />} />
