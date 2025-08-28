@@ -55,11 +55,27 @@ router.get('/:id', authGuard, async (req, res) => {
         const { id } = req.params;
         const floor = await prisma.floor.findUnique({
                 where: { id },
-                include: { rooms: { orderBy: { name: 'asc' } } },
+                include: {
+                        rooms: {
+                                orderBy: { name: 'asc' },
+                                select: {
+                                        id: true,
+                                        name: true,
+                                        capacity: true,
+                                        equipment: true, // <-- make sure it's included
+                                        createdAt: true,
+                                        updatedAt: true,
+                                }
+                        }
+                },
         });
         if (!floor) return res.status(404).json({ error: 'Not found' });
-        res.json({ floor: { id: floor.id, name: floor.name, buildingId: floor.buildingId }, rooms: floor.rooms });
+        res.json({
+                floor: { id: floor.id, name: floor.name, buildingId: floor.buildingId },
+                rooms: floor.rooms
+        });
 });
+
 
 /**
  * PUT /floors/:id  { name }
@@ -105,18 +121,18 @@ router.delete('/:id', authGuard, adminOnly, async (req, res) => {
  * POST /floors/:floorId/rooms  { name, capacity }
  * Create a room in a floor (admin)
  */
-router.post('/:floorId/rooms', authGuard, adminOnly, async (req, res, next) => {
-        try {
-                const { floorId } = req.params;
-                const { name, capacity, equipment } = req.body;
-                if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+router.post('/:floorId/rooms', authGuard, adminOnly, async (req, res) => {
+        const { floorId } = req.params;
+        const { name, capacity, equipment } = req.body;
+        if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
 
+        try {
                 const data = {
                         floorId,
                         name: name.trim(),
                         capacity: Number(capacity) || 4,
                 };
-                if (equipment !== undefined) data.equipment = equipment; // ← store projector etc.
+                if (equipment !== undefined) data.equipment = equipment; // ← store projector, etc.
 
                 const room = await prisma.room.create({ data });
                 res.status(201).json(room);
@@ -129,20 +145,21 @@ router.post('/:floorId/rooms', authGuard, adminOnly, async (req, res, next) => {
 });
 
 
+
 /**
  * PUT /floors/rooms/:roomId  { name?, capacity? }
  * Update a room (admin)
  */
-router.put('/rooms/:roomId', authGuard, adminOnly, async (req, res, next) => {
-        try {
-                const { roomId } = req.params;
-                const { name, capacity, equipment } = req.body;
+router.put('/rooms/:roomId', authGuard, adminOnly, async (req, res) => {
+        const { roomId } = req.params;
+        const { name, capacity, equipment } = req.body;
 
+        try {
                 const data = {};
                 if (name !== undefined) data.name = name.trim();
                 if (capacity !== undefined) data.capacity = Number(capacity);
 
-                // If equipment is provided, merge with existing so we don't wipe other keys
+                // merge equipment so we don't wipe other keys
                 if (equipment !== undefined) {
                         const current = await prisma.room.findUnique({
                                 where: { id: roomId },
@@ -164,6 +181,7 @@ router.put('/rooms/:roomId', authGuard, adminOnly, async (req, res, next) => {
                 res.status(500).json({ error: 'Failed to update room' });
         }
 });
+
 
 
 /**

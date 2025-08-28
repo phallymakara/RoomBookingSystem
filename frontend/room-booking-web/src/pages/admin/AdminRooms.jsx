@@ -1,304 +1,673 @@
 // frontend/src/pages/admin/AdminRooms.jsx
+
 import { useEffect, useMemo, useState } from 'react';
 import {
-        adminCreateRoom,
-        getGroupedRooms,
-        getFloorLabels,
-        setFloorLabels,
+        listBuildings,
+        listFloors,
+        getFloorRooms,
+        getRoomOpenHours,
+        setRoomOpenHours,
 } from '../../api';
 
 const BRAND = '#272446';
+const IN_USE = '#bd1e30';
+
+// Fixed time slots
+const TIME_SLOTS = [
+        { key: 's7_9', label: '7–9', startHHMM: '07:00', endHHMM: '09:00' },
+        { key: 's9_11', label: '9–11', startHHMM: '09:00', endHHMM: '11:00' },
+        { key: 's13_15', label: '1–3', startHHMM: '13:00', endHHMM: '15:00' },
+        { key: 's15_17', label: '3–5', startHHMM: '15:00', endHHMM: '17:00' },
+];
+
+const WEEKDAYS = [
+        { val: 1, label: 'Mon' },
+        { val: 2, label: 'Tue' },
+        { val: 3, label: 'Wed' },
+        { val: 4, label: 'Thu' },
+        { val: 5, label: 'Fri' },
+        { val: 6, label: 'Sat' },
+];
+
+// ===== Sizing & typography for slot buttons =====
+const SLOT_BTN_HEIGHT = 40;        // uniform height for every slot button (px)
+const SLOT_TEXT_PX = 10;           // small font for professor & course
+const SLOT_LINE_HEIGHT = 1.15;     // tight lines to fit two rows nicely
 
 export default function AdminRooms() {
         const token = localStorage.getItem('token') || '';
-        const [building, setBuilding] = useState('Main');
 
-        // data
-        const [groups, setGroups] = useState([]);   // [{building,floor,label,rooms:[...]}]
-        const [labels, setLabels] = useState({});   // {"1":"First Floor", ...}
+        // Selections
+        const [buildings, setBuildings] = useState([]);
+        const [selBuildingId, setSelBuildingId] = useState('');
+        const [floors, setFloors] = useState([]);
+        const [selFloorId, setSelFloorId] = useState('');
+        const [rooms, setRooms] = useState([]);
 
-        // ui
+        // Weekday
+        const [weekday, setWeekday] = useState(1); // Mon
+
+        // UI
         const [loading, setLoading] = useState(true);
-        const [error, setError] = useState('');
+        const [err, setErr] = useState('');
+        const [savingRowId, setSavingRowId] = useState(null);
+        const [savedRowId, setSavedRowId] = useState(null);
 
-        // floor creation form
-        const [newLevel, setNewLevel] = useState(1);
-        const [newLabel, setNewLabel] = useState('');
+        // ===== State for hours =====
+        // Hours loaded from DB (explicit, exact open slots)
+        // { [roomId]: Array<{weekday,startHHMM,endHHMM}> }
+        const [explicitHours, setExplicitHours] = useState({});
+        // Day mode (default = all green unless closed; explicit = trust explicitHours)
+        // { [roomId]: { [weekday]: 'default' | 'explicit' } }
+        const [dayMode, setDayMode] = useState({});
+        // For default days, track only the slots the admin explicitly CLOSED
+        // { [roomId]: { [weekday]: Set<slotKey> } }
+        const [closedSlots, setClosedSlots] = useState({});
 
-        // add room form
-        const [roomName, setRoomName] = useState('');
-        const [roomCap, setRoomCap] = useState(4);
+        // In-use info per room/day/slot: { [roomId]: { [weekday]: { [slotKey]: { professor, course } } } }
+        const [inUseText, setInUseText] = useState({});
 
-        // floors to show (labels ∪ groups) so floors show even with 0 rooms
-        const floorKeys = useMemo(() => {
-                const set = new Set(Object.keys(labels || {}));
-                groups.forEach(g => set.add(String(g.floor)));
-                return Array.from(set).sort((a, b) => Number(a) - Number(b));
-        }, [labels, groups]);
+        // Inline editor state for setting "in use"
+        // { roomId, wday, slotKey, slot, professor, course } | null
+        const [editing, setEditing] = useState(null);
 
-        // selected floor
-        const [selectedKey, setSelectedKey] = useState('1');
-        const selectedFloor = useMemo(() => Number(selectedKey || 0), [selectedKey]);
+        // Confirm-cancel modal state for clearing an in-use slot
+        // { roomId, wday, slot, slotKey, info } | null
+        const [confirmCancel, setConfirmCancel] = useState(null);
 
-        // rooms on the selected floor
-        const rooms = useMemo(() => {
-                const g = groups.find(x => x.building === building && x.floor === selectedFloor);
-                return g?.rooms || [];
-        }, [groups, building, selectedFloor]);
-
-        const selectedLabel = labels[selectedKey] || (selectedKey ? `Floor ${selectedKey}` : '');
-
-        async function loadAll() {
-                try {
-                        setError('');
-                        setLoading(true);
-                        const [grp, lbl] = await Promise.all([
-                                getGroupedRooms(building),
-                                getFloorLabels(building).catch(() => ({})),
-                        ]);
-                        setGroups(Array.isArray(grp) ? grp : []);
-                        setLabels(lbl || {});
-                } catch (e) {
-                        setError(e.message || 'Failed to load rooms');
-                } finally {
-                        setLoading(false);
-                }
-        }
-
+        // Load buildings
         useEffect(() => {
-                loadAll();
+                (async () => {
+                        try {
+                                setErr('');
+                                const b = await listBuildings(token);
+                                const list = Array.isArray(b) ? b : [];
+                                setBuildings(list);
+                                if (list.length) setSelBuildingId(list[0].id);
+                        } catch (e) {
+                                setErr(e.message || 'Failed to load buildings');
+                        }
+                })();
                 // eslint-disable-next-line react-hooks/exhaustive-deps
-        }, [building]);
+        }, []);
 
-        // create floor (label)
-        async function createFloor(e) {
-                e.preventDefault();
-                if (!newLevel) return;
-                try {
-                        // merge current labels + new one
-                        const next = { ...labels, [String(newLevel)]: newLabel || `Floor ${newLevel}` };
-                        const payload = Object.entries(next).map(([level, label]) => ({
-                                level: Number(level),
-                                label: String(label),
-                        }));
-                        await setFloorLabels(token, building, payload);
-                        setLabels(next);
-                        setSelectedKey(String(newLevel)); // jump to the new floor
-                        setNewLabel('');
-                } catch (e) {
-                        alert(e.message || 'Failed to create floor');
+        // Load floors for building
+        useEffect(() => {
+                (async () => {
+                        if (!selBuildingId) { setFloors([]); setSelFloorId(''); setRooms([]); return; }
+                        try {
+                                setErr(''); setLoading(true);
+                                const fs = await listFloors(token, selBuildingId);
+                                const fl = Array.isArray(fs) ? fs : [];
+                                setFloors(fl);
+                                setSelFloorId(fl[0]?.id || '');
+                        } catch (e) {
+                                setErr(e.message || 'Failed to load floors');
+                        } finally {
+                                setLoading(false);
+                        }
+                })();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [selBuildingId]);
+
+        // Load rooms & hours for floor
+        useEffect(() => {
+                (async () => {
+                        if (!selFloorId) {
+                                setRooms([]);
+                                setExplicitHours({});
+                                setDayMode({});
+                                setClosedSlots({});
+                                setInUseText({});
+                                setEditing(null);
+                                return;
+                        }
+                        try {
+                                setErr(''); setLoading(true);
+                                const { rooms } = await getFloorRooms(token, selFloorId);
+                                const list = Array.isArray(rooms) ? rooms : [];
+                                setRooms(list);
+
+                                const entries = await Promise.all(
+                                        list.map(async (r) => {
+                                                const hrs = await getRoomOpenHours(r.id).catch(() => []);
+                                                return [r.id, Array.isArray(hrs) ? hrs : []];
+                                        })
+                                );
+
+                                // Build explicitHours map
+                                const byRoom = Object.fromEntries(entries);
+                                setExplicitHours(byRoom);
+
+                                // Build dayMode: explicit if any entry exists for that day, else default
+                                const nextMode = {};
+                                for (const [rid, hrs] of entries) {
+                                        nextMode[rid] = nextMode[rid] || {};
+                                        for (let d = 1; d <= 6; d++) {
+                                                nextMode[rid][d] = hrs.some(h => h.weekday === d) ? 'explicit' : 'default';
+                                        }
+                                }
+                                setDayMode(nextMode);
+
+                                // Reset per-floor transient state
+                                setClosedSlots({});
+                                setInUseText({});
+                                setEditing(null);
+                        } catch (e) {
+                                setErr(e.message || 'Failed to load rooms');
+                        } finally {
+                                setLoading(false);
+                        }
+                })();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+        }, [selFloorId]);
+
+        const buildingName = useMemo(
+                () => buildings.find(b => b.id === selBuildingId)?.name || '',
+                [buildings, selBuildingId]
+        );
+        const floorName = useMemo(
+                () => floors.find(f => f.id === selFloorId)?.name || '',
+                [floors, selFloorId]
+        );
+
+        // ===== helpers =====
+        const isExplicit = (roomId, wday) => dayMode[roomId]?.[wday] === 'explicit';
+
+        function hasSlot(roomId, wday, slot) {
+                if (isExplicit(roomId, wday)) {
+                        const hrs = explicitHours[roomId] || [];
+                        return hrs.some(
+                                h => h.weekday === wday && h.startHHMM === slot.startHHMM && h.endHHMM === slot.endHHMM
+                        );
                 }
+                // default mode = green unless explicitly closed
+                const slotSet = closedSlots[roomId]?.[wday];
+                return !(slotSet && slotSet.has(slot.key));
         }
 
-        // add room into selected floor
-        async function addRoom(e) {
-                e.preventDefault();
-                if (!selectedFloor) return alert('Create/select a floor first.');
-                try {
-                        await adminCreateRoom(token, {
-                                name: roomName.trim(),
-                                building,
-                                floor: selectedFloor,
-                                capacity: Number(roomCap),
-                                equipment: {},
+        function setSlotInfo(roomId, wday, slotKey, value /* {professor, course} | null */) {
+                setInUseText(prev => {
+                        const room = { ...(prev[roomId] || {}) };
+                        const day = { ...(room[wday] || {}) };
+                        if (!value || (!value.professor?.trim() && !value.course?.trim())) {
+                                delete day[slotKey];
+                        } else {
+                                day[slotKey] = {
+                                        professor: value.professor?.trim() || '',
+                                        course: value.course?.trim() || '',
+                                };
+                        }
+                        if (Object.keys(day).length === 0) delete room[wday];
+                        else room[wday] = day;
+                        return { ...prev, [roomId]: room };
+                });
+        }
+
+        function getSlotInfo(roomId, wday, slotKey) {
+                return inUseText[roomId]?.[wday]?.[slotKey] || null;
+        }
+
+        function addExplicitSlot(roomId, wday, slot) {
+                setExplicitHours(prev => {
+                        const curr = prev[roomId] ? [...prev[roomId]] : [];
+                        const exists = curr.some(h => h.weekday === wday && h.startHHMM === slot.startHHMM && h.endHHMM === slot.endHHMM);
+                        if (!exists) curr.push({ weekday: wday, startHHMM: slot.startHHMM, endHHMM: slot.endHHMM });
+                        return { ...prev, [roomId]: curr };
+                });
+        }
+
+        function removeExplicitSlot(roomId, wday, slot) {
+                setExplicitHours(prev => {
+                        const curr = prev[roomId] ? [...prev[roomId]] : [];
+                        const idx = curr.findIndex(h => h.weekday === wday && h.startHHMM === slot.startHHMM && h.endHHMM === slot.endHHMM);
+                        if (idx >= 0) curr.splice(idx, 1);
+                        return { ...prev, [roomId]: curr };
+                });
+        }
+
+        function addClosed(roomId, wday, slotKey) {
+                setClosedSlots(prev => {
+                        const roomMap = { ...(prev[roomId] || {}) };
+                        const slotSet = new Set(roomMap[wday] || []);
+                        slotSet.add(slotKey);
+                        roomMap[wday] = slotSet;
+                        return { ...prev, [roomId]: roomMap };
+                });
+        }
+
+        function removeClosed(roomId, wday, slotKey) {
+                setClosedSlots(prev => {
+                        const roomMap = { ...(prev[roomId] || {}) };
+                        const slotSet = new Set(roomMap[wday] || []);
+                        slotSet.delete(slotKey);
+                        if (slotSet.size === 0) delete roomMap[wday];
+                        else roomMap[wday] = slotSet;
+                        return { ...prev, [roomId]: roomMap };
+                });
+        }
+
+        // Clicking a slot:
+        // - If currently available -> open 2-field editor to set "in use"
+        // - If currently in use -> open confirm modal to cancel class (make available)
+        function handleClickSlot(roomId, wday, slot, available) {
+                if (available) {
+                        const existing = getSlotInfo(roomId, wday, slot.key) || { professor: '', course: '' };
+                        setEditing({
+                                roomId,
+                                wday,
+                                slotKey: slot.key,
+                                slot,
+                                professor: existing.professor,
+                                course: existing.course,
                         });
-                        setRoomName('');
-                        await loadAll(); // refresh count + list
-                } catch (e) {
-                        alert(e.message || 'Failed to add room');
+                } else {
+                        const info = getSlotInfo(roomId, wday, slot.key);
+                        setConfirmCancel({ roomId, wday, slot, slotKey: slot.key, info });
                 }
         }
+
+        function cancelEditing() {
+                setEditing(null);
+        }
+
+        function saveEditing() {
+                if (!editing) return;
+                const { roomId, wday, slot, slotKey, professor, course } = editing;
+                // Persist the "in-use" choice in local state
+                setSlotInfo(roomId, wday, slotKey, { professor, course });
+
+                if (isExplicit(roomId, wday)) {
+                        // Mark as in use by removing this slot from explicitHours
+                        removeExplicitSlot(roomId, wday, slot);
+                } else {
+                        // Mark as in use by adding this slot to closedSlots
+                        addClosed(roomId, wday, slotKey);
+                }
+                setEditing(null);
+        }
+
+        function confirmCancelNo() {
+                setConfirmCancel(null);
+        }
+
+        function confirmCancelYes() {
+                if (!confirmCancel) return;
+                const { roomId, wday, slot, slotKey } = confirmCancel;
+
+                // Make it available (confirm action)
+                if (isExplicit(roomId, wday)) {
+                        addExplicitSlot(roomId, wday, slot);
+                } else {
+                        removeClosed(roomId, wday, slotKey);
+                }
+                setSlotInfo(roomId, wday, slotKey, null);
+
+                setConfirmCancel(null);
+        }
+
+        async function saveRoomHours(roomId) {
+                try {
+                        setSavingRowId(roomId);
+                        setSavedRowId(null);
+
+                        // Build final list to persist:
+                        // - For explicit days: take explicitHours as-is for that day
+                        // - For default days: all slots except ones in closedSlots
+                        const base = explicitHours[roomId] || [];
+                        const out = [...base]; // copy explicit entries for any days in 'explicit' mode
+
+                        // Add computed opens for default days that have any closed toggles
+                        const roomClosed = closedSlots[roomId] || {};
+                        for (let d = 1; d <= 6; d++) {
+                                if (dayMode[roomId]?.[d] === 'default') {
+                                        const closedSet = roomClosed[d];
+                                        if (closedSet && closedSet.size > 0) {
+                                                // open = all except closed
+                                                TIME_SLOTS.forEach(s => {
+                                                        if (!closedSet.has(s.key)) {
+                                                                out.push({ weekday: d, startHHMM: s.startHHMM, endHHMM: s.endHHMM });
+                                                        }
+                                                });
+                                        }
+                                        // If there are no closed toggles for this default day, we don't persist anything;
+                                        // it stays "default all-green" next time we load.
+                                }
+                        }
+
+                        await setRoomOpenHours(token, roomId, out);
+
+                        // After saving, reload this room's hours to sync display + modes
+                        const fresh = await getRoomOpenHours(roomId).catch(() => []);
+                        setExplicitHours(prev => ({ ...prev, [roomId]: fresh }));
+
+                        setDayMode(prev => {
+                                const nm = { ...(prev[roomId] || {}) };
+                                for (let d = 1; d <= 6; d++) {
+                                        nm[d] = fresh.some(h => h.weekday === d) ? 'explicit' : 'default';
+                                }
+                                return { ...prev, [roomId]: nm };
+                        });
+
+                        // Clear closed toggles for this room (they're now encoded in explicit hours if any)
+                        setClosedSlots(prev => {
+                                const copy = { ...prev };
+                                delete copy[roomId];
+                                return copy;
+                        });
+
+                        setSavedRowId(roomId);
+                        setTimeout(() => setSavedRowId(null), 1200);
+                } catch (e) {
+                        alert(e.message || 'Failed to save hours');
+                } finally {
+                        setSavingRowId(null);
+                }
+        }
+
+        // Single-line ellipsis helper (used for both lines)
+        const lineEllipsis = {
+                display: 'block',
+                width: '100%',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+        };
 
         return (
-                <div className="row g-3">
-                        {/* Left: Floor management */}
-                        <aside className="col-12 col-md-4 col-lg-3">
-                                <div className="card border-0 shadow-sm">
-                                        <div className="card-body">
-                                                <div className="d-flex align-items-end justify-content-between mb-3">
-                                                        <div>
-                                                                <h2 className="h5 mb-1">Floors</h2>
-                                                                <div className="text-secondary small">Create a floor, then add rooms.</div>
+                <>
+                        <div className="row g-3">
+                                {/* LEFT */}
+                                <aside className="col-12 col-md-4 col-lg-3">
+                                        <div className="card border-0 shadow-sm">
+                                                <div className="card-body">
+                                                        <div className="d-flex align-items-end justify-content-between mb-3">
+                                                                <div style={{ minWidth: 220 }}>
+                                                                        <label className="form-label me-2 mb-0 small">Building</label>
+                                                                        <select
+                                                                                className="form-select form-select-sm"
+                                                                                value={selBuildingId}
+                                                                                onChange={(e) => setSelBuildingId(e.target.value)}
+                                                                        >
+                                                                                {buildings.length === 0 ? (
+                                                                                        <option value="">No buildings</option>
+                                                                                ) : (
+                                                                                        buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)
+                                                                                )}
+                                                                        </select>
+                                                                </div>
                                                         </div>
-                                                        <div className="d-flex align-items-center">
-                                                                <label className="form-label me-2 mb-0 small">Building</label>
+
+                                                        <div className="list-group">
+                                                                {loading ? (
+                                                                        <div className="d-flex align-items-center gap-2 px-3 py-2">
+                                                                                <span className="spinner-border spinner-border-sm" />
+                                                                                <span>Loading…</span>
+                                                                        </div>
+                                                                ) : floors.length === 0 ? (
+                                                                        <div className="text-secondary small px-3 py-2">No floors found.</div>
+                                                                ) : (
+                                                                        floors.map(f => (
+                                                                                <button
+                                                                                        key={f.id}
+                                                                                        className={`list-group-item list-group-item-action ${selFloorId === f.id ? 'active' : ''}`}
+                                                                                        onClick={() => setSelFloorId(f.id)}
+                                                                                        style={selFloorId === f.id ? { backgroundColor: BRAND, borderColor: BRAND } : undefined}
+                                                                                >
+                                                                                        {f.name}
+                                                                                </button>
+                                                                        ))
+                                                                )}
+                                                        </div>
+
+                                                        {err && <div className="alert alert-danger mt-3">{err}</div>}
+                                                </div>
+                                        </div>
+                                </aside>
+
+                                {/* RIGHT */}
+                                <main className="col-12 col-md-8 col-lg-9">
+                                        <div className="card border-0 shadow-sm">
+                                                <div className="card-body">
+                                                        <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                                                                <div>
+                                                                        <h2 className="h5 mb-0">{floorName || 'No floor selected'}</h2>
+                                                                        <div className="text-secondary small">{buildingName}</div>
+                                                                </div>
+
+                                                                {/* weekday selector */}
+                                                                <div className="d-flex align-items-center gap-2">
+                                                                        <label className="form-label mb-0 small">Weekday</label>
+                                                                        <select
+                                                                                className="form-select form-select-sm"
+                                                                                value={weekday}
+                                                                                onChange={(e) => setWeekday(Number(e.target.value))}
+                                                                        >
+                                                                                {WEEKDAYS.map(d => (
+                                                                                        <option value={d.val} key={d.val}>{d.label}</option>
+                                                                                ))}
+                                                                        </select>
+                                                                </div>
+                                                        </div>
+
+                                                        {/* table */}
+                                                        <div className="table-responsive">
+                                                                <table
+                                                                        className="table table-striped table-hover align-middle"
+                                                                        style={{ tableLayout: 'fixed', width: '100%' }}   // ← equalize slot column widths
+                                                                >
+                                                                        <thead>
+                                                                                <tr>
+                                                                                        <th style={{ width: 180, padding: '5px' }}>Room</th>
+                                                                                        {TIME_SLOTS.map(s => (
+                                                                                                <th key={s.key} className="text-center" style={{ padding: '5px' }}>{s.label}</th>
+                                                                                        ))}
+                                                                                        <th style={{ width: 120, padding: '5px' }}></th>
+                                                                                </tr>
+                                                                        </thead>
+
+                                                                        <tbody>
+                                                                                {rooms.length === 0 ? (
+                                                                                        <tr>
+                                                                                                <td colSpan={TIME_SLOTS.length + 2} className="text-secondary">
+                                                                                                        No rooms on this floor.
+                                                                                                </td>
+                                                                                        </tr>
+                                                                                ) : (
+                                                                                        rooms.map(r => (
+                                                                                                <tr key={r.id}>
+                                                                                                        <td style={{ padding: '5px' }}>{r.name}</td>
+
+                                                                                                        {TIME_SLOTS.map(s => {
+                                                                                                                const available = hasSlot(r.id, weekday, s);
+                                                                                                                const info = getSlotInfo(r.id, weekday, s.key);
+                                                                                                                const profText = info?.professor?.trim() || 'In use';
+                                                                                                                const courseText = info?.course?.trim() || '';
+                                                                                                                const titleWhenInUse = courseText
+                                                                                                                        ? `${profText}\n${courseText}`
+                                                                                                                        : `${profText}\n(click to set Available)`;
+                                                                                                                return (
+                                                                                                                        <td key={s.key} className="text-center" style={{ padding: '5px' }}>
+                                                                                                                                <button
+                                                                                                                                        type="button"
+                                                                                                                                        className="btn btn-sm text-white"
+                                                                                                                                        onClick={() => handleClickSlot(r.id, weekday, s, available)}
+                                                                                                                                        title={available ? 'Available (click to set In use)' : titleWhenInUse}
+                                                                                                                                        style={{
+                                                                                                                                                width: '100%',
+                                                                                                                                                height: SLOT_BTN_HEIGHT,                 // ← uniform height
+                                                                                                                                                backgroundColor: available ? BRAND : IN_USE,
+                                                                                                                                                borderColor: available ? BRAND : IN_USE,
+                                                                                                                                                display: 'flex',
+                                                                                                                                                flexDirection: 'column',                  // ← two-line stack
+                                                                                                                                                alignItems: 'center',                     // ← center horizontally
+                                                                                                                                                justifyContent: 'center',                 // ← center vertically
+                                                                                                                                                paddingTop: 3,
+                                                                                                                                                paddingBottom: 3,
+                                                                                                                                                textAlign: 'center',                      // ← center text
+                                                                                                                                                overflow: 'hidden',
+                                                                                                                                        }}
+                                                                                                                                >
+                                                                                                                                        {available ? (
+                                                                                                                                                // Available state: keep same layout & height for balance
+                                                                                                                                                <span
+                                                                                                                                                        style={{
+                                                                                                                                                                ...lineEllipsis,
+                                                                                                                                                                fontWeight: 600,
+                                                                                                                                                                lineHeight: SLOT_LINE_HEIGHT,
+                                                                                                                                                                width: '100%',
+                                                                                                                                                        }}
+                                                                                                                                                >
+                                                                                                                                                        {s.label}
+                                                                                                                                                </span>
+                                                                                                                                        ) : (
+                                                                                                                                                // In-use state: Professor (top), Course (bottom), both small with ellipsis
+                                                                                                                                                <span className="d-block w-100">
+                                                                                                                                                        <span
+                                                                                                                                                                style={{
+                                                                                                                                                                        ...lineEllipsis,
+                                                                                                                                                                        fontSize: SLOT_TEXT_PX,
+                                                                                                                                                                        lineHeight: SLOT_LINE_HEIGHT,
+                                                                                                                                                                        fontWeight: 600,
+                                                                                                                                                                        textAlign: 'center',
+                                                                                                                                                                }}
+                                                                                                                                                        >
+                                                                                                                                                                {profText}
+                                                                                                                                                        </span>
+                                                                                                                                                        <span
+                                                                                                                                                                style={{
+                                                                                                                                                                        ...lineEllipsis,
+                                                                                                                                                                        fontSize: SLOT_TEXT_PX,
+                                                                                                                                                                        lineHeight: SLOT_LINE_HEIGHT,
+                                                                                                                                                                        textAlign: 'center',
+                                                                                                                                                                }}
+                                                                                                                                                        >
+                                                                                                                                                                {courseText}
+                                                                                                                                                        </span>
+                                                                                                                                                </span>
+                                                                                                                                        )}
+                                                                                                                                </button>
+                                                                                                                        </td>
+                                                                                                                );
+                                                                                                        })}
+
+                                                                                                        <td className="text-end" style={{ padding: '5px' }}>
+                                                                                                                <div className="btn-group btn-group-sm">
+                                                                                                                        <button
+                                                                                                                                className="btn btn-outline-secondary"
+                                                                                                                                disabled={savingRowId === r.id}
+                                                                                                                                onClick={() => saveRoomHours(r.id)}
+                                                                                                                        >
+                                                                                                                                {savingRowId === r.id ? 'Saving…' : (savedRowId === r.id ? 'Saved' : 'Save')}
+                                                                                                                        </button>
+                                                                                                                </div>
+                                                                                                        </td>
+                                                                                                </tr>
+                                                                                        ))
+                                                                                )}
+                                                                        </tbody>
+                                                                </table>
+                                                        </div>
+                                                </div>
+                                        </div>
+                                </main>
+                        </div>
+
+                        {/* ===== Inline 2-field editor (simple modal) ===== */}
+                        {editing && (
+                                <div
+                                        className="position-fixed top-0 start-0 w-100 h-100"
+                                        style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1060 }}
+                                        onClick={(e) => {
+                                                // click backdrop only
+                                                if (e.target === e.currentTarget) cancelEditing();
+                                        }}
+                                >
+                                        <div
+                                                className="position-absolute top-50 start-50 translate-middle card shadow"
+                                                style={{ width: 380, maxWidth: '90vw' }}
+                                        >
+                                                <div className="card-body">
+                                                        <div className="d-flex justify-content-between align-items-start mb-2">
+                                                                <div className="fw-semibold">Set slot as In Use</div>
+                                                                <button className="btn btn-sm btn-light" onClick={cancelEditing}>✕</button>
+                                                        </div>
+                                                        <div className="text-secondary small mb-3">
+                                                                {editing.slot?.startHHMM}–{editing.slot?.endHHMM}
+                                                        </div>
+                                                        <div className="mb-2">
+                                                                <label className="form-label small mb-1">Professor name</label>
                                                                 <input
+                                                                        autoFocus
                                                                         className="form-control form-control-sm"
-                                                                        style={{ width: 140 }}
-                                                                        value={building}
-                                                                        onChange={e => setBuilding(e.target.value || 'Main')}
+                                                                        value={editing.professor}
+                                                                        onChange={(e) => setEditing(ed => ({ ...ed, professor: e.target.value }))}
+                                                                        placeholder="e.g., Dr. Sokha"
                                                                 />
                                                         </div>
-                                                </div>
-
-                                                {/* Existing floors */}
-                                                <div className="list-group mb-3">
-                                                        {loading ? (
-                                                                <div className="d-flex align-items-center gap-2 px-3 py-2">
-                                                                        <span className="spinner-border spinner-border-sm" />
-                                                                        <span>Loading…</span>
-                                                                </div>
-                                                        ) : floorKeys.length === 0 ? (
-                                                                <div className="text-secondary small px-3 py-2">No floors yet.</div>
-                                                        ) : (
-                                                                floorKeys.map(k => {
-                                                                        const count =
-                                                                                (groups.find(g => g.building === building && g.floor === Number(k))?.rooms || []).length;
-                                                                        return (
-                                                                                <button
-                                                                                        key={k}
-                                                                                        className={`list-group-item list-group-item-action d-flex justify-content-between align-items-center ${selectedKey === k ? 'active' : ''
-                                                                                                }`}
-                                                                                        onClick={() => setSelectedKey(k)}
-                                                                                        style={
-                                                                                                selectedKey === k
-                                                                                                        ? { backgroundColor: BRAND, borderColor: BRAND }
-                                                                                                        : undefined
-                                                                                        }
-                                                                                >
-                                                                                        <span>{labels[k] || `Floor ${k}`}</span>
-                                                                                        <span className="badge bg-secondary">{count}</span>
-                                                                                </button>
-                                                                        );
-                                                                })
-                                                        )}
-                                                </div>
-
-                                                {/* Create floor */}
-                                                <form className="border rounded-3 p-2" onSubmit={createFloor}>
-                                                        <div className="row g-2">
-                                                                <div className="col-4">
-                                                                        <label className="form-label small mb-1">Level</label>
-                                                                        <input
-                                                                                type="number"
-                                                                                className="form-control form-control-sm"
-                                                                                value={newLevel}
-                                                                                onChange={e => setNewLevel(Number(e.target.value || 0))}
-                                                                                required
-                                                                        />
-                                                                </div>
-                                                                <div className="col-8">
-                                                                        <label className="form-label small mb-1">Label</label>
-                                                                        <input
-                                                                                className="form-control form-control-sm"
-                                                                                value={newLabel}
-                                                                                onChange={e => setNewLabel(e.target.value)}
-                                                                                placeholder="First Floor"
-                                                                        />
-                                                                </div>
-                                                                <div className="col-12">
-                                                                        <button
-                                                                                className="btn btn-sm text-white w-100"
-                                                                                style={{ backgroundColor: BRAND, borderColor: BRAND }}
-                                                                        >
-                                                                                + Create Floor
-                                                                        </button>
-                                                                </div>
+                                                        <div className="mb-3">
+                                                                <label className="form-label small mb-1">Course name</label>
+                                                                <input
+                                                                        className="form-control form-control-sm"
+                                                                        value={editing.course}
+                                                                        onChange={(e) => setEditing(ed => ({ ...ed, course: e.target.value }))}
+                                                                        placeholder="e.g., CS101 – Intro to CS"
+                                                                />
                                                         </div>
-                                                </form>
-
-                                                {error && <div className="alert alert-danger mt-3">{error}</div>}
+                                                        <div className="d-flex justify-content-end gap-2">
+                                                                <button className="btn btn-sm btn-light" onClick={cancelEditing}>Cancel</button>
+                                                                <button
+                                                                        className="btn btn-sm text-white"
+                                                                        style={{ backgroundColor: IN_USE, borderColor: IN_USE }}
+                                                                        onClick={saveEditing}
+                                                                >
+                                                                        Save
+                                                                </button>
+                                                        </div>
+                                                </div>
                                         </div>
                                 </div>
-                        </aside>
+                        )}
 
-                        {/* Right: Rooms in selected floor */}
-                        <main className="col-12 col-md-8 col-lg-9">
-                                <div className="card border-0 shadow-sm">
-                                        <div className="card-body">
-                                                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-                                                        <div>
-                                                                <h2 className="h5 mb-0">
-                                                                        {selectedKey ? selectedLabel : 'No floor selected'}
-                                                                </h2>
-                                                                <div className="text-secondary small">{building}</div>
+                        {/* ===== Confirm-cancel modal (when clicking an in-use slot) ===== */}
+                        {confirmCancel && (
+                                <div
+                                        className="position-fixed top-0 start-0 w-100 h-100"
+                                        style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1060 }}
+                                        onClick={(e) => {
+                                                if (e.target === e.currentTarget) confirmCancelNo();
+                                        }}
+                                >
+                                        <div
+                                                className="position-absolute top-50 start-50 translate-middle card shadow"
+                                                style={{ width: 420, maxWidth: '92vw' }}
+                                        >
+                                                <div className="card-body">
+                                                        <div className="d-flex justify-content-between align-items-start mb-2">
+                                                                <div className="fw-semibold">Cancel this class?</div>
+                                                                <button className="btn btn-sm btn-light" onClick={confirmCancelNo}>✕</button>
                                                         </div>
-                                                        {/* Room count */}
-                                                        <div
-                                                                className="badge rounded-pill"
-                                                                style={{
-                                                                        backgroundColor: BRAND,
-                                                                        color: '#fff',
-                                                                        fontSize: '0.9rem',
-                                                                        padding: '0.5rem 0.75rem'
-                                                                }}
-                                                                title="Number of rooms on this floor"
-                                                        >
-                                                                {rooms.length} room{rooms.length !== 1 ? 's' : ''}
+                                                        <div className="text-secondary small mb-3">
+                                                                {confirmCancel.slot?.startHHMM}–{confirmCancel.slot?.endHHMM}
+                                                        </div>
+                                                        <div className="small mb-3">
+                                                                <div><strong>Professor:</strong> {confirmCancel.info?.professor || '—'}</div>
+                                                                <div><strong>Course:</strong> {confirmCancel.info?.course || '—'}</div>
+                                                        </div>
+                                                        <div className="d-flex justify-content-end gap-2">
+                                                                <button className="btn btn-sm btn-light" onClick={confirmCancelNo}>No, keep</button>
+                                                                <button
+                                                                        className="btn btn-sm text-white"
+                                                                        style={{ backgroundColor: IN_USE, borderColor: IN_USE }}
+                                                                        onClick={confirmCancelYes}
+                                                                >
+                                                                        Yes, cancel
+                                                                </button>
                                                         </div>
                                                 </div>
-
-                                                {/* Add room (only if a floor is selected) */}
-                                                {selectedKey ? (
-                                                        <form className="row g-3 mb-3" onSubmit={addRoom}>
-                                                                <div className="col-12 col-md-6 col-lg-5">
-                                                                        <label className="form-label">Room name</label>
-                                                                        <input
-                                                                                className="form-control"
-                                                                                value={roomName}
-                                                                                onChange={e => setRoomName(e.target.value)}
-                                                                                placeholder="A101"
-                                                                                required
-                                                                        />
-                                                                </div>
-                                                                <div className="col-6 col-md-3 col-lg-2">
-                                                                        <label className="form-label">Capacity</label>
-                                                                        <input
-                                                                                type="number"
-                                                                                className="form-control"
-                                                                                value={roomCap}
-                                                                                onChange={e => setRoomCap(e.target.value)}
-                                                                                min={1}
-                                                                                max={999}
-                                                                                required
-                                                                        />
-                                                                </div>
-                                                                <div className="col-12 col-md-3 col-lg-2 d-flex align-items-end">
-                                                                        <button
-                                                                                className="btn text-white w-100"
-                                                                                style={{ backgroundColor: BRAND, borderColor: BRAND }}
-                                                                        >
-                                                                                + Add Room
-                                                                        </button>
-                                                                </div>
-                                                        </form>
-                                                ) : (
-                                                        <div className="alert alert-light border">
-                                                                Create or select a floor on the left to add rooms.
-                                                        </div>
-                                                )}
-
-                                                {/* Rooms list */}
-                                                <div className="table-responsive">
-                                                        <table className="table table-striped table-hover align-middle">
-                                                                <thead className="table-dark">
-                                                                        <tr>
-                                                                                <th style={{ width: 200 }}>Name</th>
-                                                                                <th style={{ width: 120 }}>Capacity</th>
-                                                                        </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                        {rooms.length === 0 ? (
-                                                                                <tr>
-                                                                                        <td colSpan={2} className="text-secondary">
-                                                                                                No rooms on this floor yet.
-                                                                                        </td>
-                                                                                </tr>
-                                                                        ) : (
-                                                                                rooms.map(r => (
-                                                                                        <tr key={r.id}>
-                                                                                                <td>{r.name}</td>
-                                                                                                <td>{r.capacity}</td>
-                                                                                        </tr>
-                                                                                ))
-                                                                        )}
-                                                                </tbody>
-                                                        </table>
-                                                </div>
-
                                         </div>
                                 </div>
-                        </main>
-                </div>
+                        )}
+                </>
         );
 }

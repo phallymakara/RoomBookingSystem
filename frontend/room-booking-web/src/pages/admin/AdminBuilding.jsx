@@ -774,6 +774,7 @@ export default function AdminFloors() {
                                                                                                                         )}
                                                                                                                 </td>
 
+                                                                                                                {/* PROJECTOR cell — click to edit, show red when None */}
                                                                                                                 <td
                                                                                                                         onClick={() => startEditProjector(r)}
                                                                                                                         style={{ cursor: 'pointer', width: 160 }}
@@ -798,9 +799,12 @@ export default function AdminFloors() {
                                                                                                                                         </div>
                                                                                                                                 </div>
                                                                                                                         ) : (
-                                                                                                                                r?.equipment?.projector ? 'Have' : 'None'
+                                                                                                                                <span className={r?.equipment?.projector ? '' : 'text-danger'}>
+                                                                                                                                        {r?.equipment?.projector ? 'Have' : 'None'}
+                                                                                                                                </span>
                                                                                                                         )}
                                                                                                                 </td>
+
 
 
 

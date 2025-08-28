@@ -235,9 +235,8 @@ export async function deleteBuilding(token, id) {
 /* ---------- FLOORS (scoped by building) ---------- */
 // list floors; pass buildingId to filter
 export async function listFloors(token, buildingId) {
-        const qs = new URLSearchParams();
-        if (buildingId) qs.set('buildingId', buildingId);
-        const res = await fetch(`${BASE}/floors${qs.toString() ? `?${qs}` : ''}`, {
+        const qs = buildingId ? `?buildingId=${encodeURIComponent(buildingId)}` : '';
+        const res = await fetch(`${BASE}/floors${qs}`, {
                 headers: { Authorization: `Bearer ${token}` }
         });
         return handle(res);
@@ -275,14 +274,15 @@ export async function getFloorRooms(token, floorId) {
         });
         return handle(res); // { floor, rooms: [...] }
 }
-export async function createRoomInFloor(token, floorId, { name, capacity }) {
+export async function createRoomInFloor(token, floorId, { name, capacity, equipment }) {
         const res = await fetch(`${BASE}/floors/${floorId}/rooms`, {
                 method: 'POST',
                 headers: auth(token),
-                body: JSON.stringify({ name, capacity })
+                body: JSON.stringify({ name, capacity, equipment }) // <-- include equipment
         });
         return handle(res);
 }
+
 export async function updateRoom(token, roomId, data) {
         const res = await fetch(`${BASE}/floors/rooms/${roomId}`, {
                 method: 'PUT',
