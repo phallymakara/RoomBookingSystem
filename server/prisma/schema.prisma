@@ -77,8 +77,24 @@ model Room {
   openHours  RoomOpenHour[]
   closures   RoomClosure[]
 
+  slotNotes RoomSlotNote[]
+
   @@unique([floorId, name]) // room name unique within a floor
   @@index([floorId])
+}
+
+model RoomSlotNote {
+  id        String  @id @default(cuid())
+  roomId    String
+  weekday   Int     // 1..6 (Mon..Sat) — keep consistent with your frontend
+  startHHMM String  // "07:00"
+  endHHMM   String  // "09:00"
+  professor String  @default("")
+  course    String  @default("")
+
+  room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, weekday, startHHMM, endHHMM])
 }
 
 model Booking {
@@ -144,3 +160,5 @@ model Policy {
   key   String @unique
   value String
 }
+
+

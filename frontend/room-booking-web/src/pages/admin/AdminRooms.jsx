@@ -7,6 +7,8 @@ import {
         getFloorRooms,
         getRoomOpenHours,
         setRoomOpenHours,
+        getRoomSlotNotes,
+        setRoomSlotNotes,
 } from '../../api';
 
 const BRAND = '#272446';
@@ -30,9 +32,9 @@ const WEEKDAYS = [
 ];
 
 // ===== Sizing & typography for slot buttons =====
-const SLOT_BTN_HEIGHT = 40;        // uniform height for every slot button (px)
-const SLOT_TEXT_PX = 10;           // small font for professor & course
-const SLOT_LINE_HEIGHT = 1.15;     // tight lines to fit two rows nicely
+const SLOT_BTN_HEIGHT = 40;
+const SLOT_TEXT_PX = 10;
+const SLOT_LINE_HEIGHT = 1.15;
 
 export default function AdminRooms() {
         const token = localStorage.getItem('token') || '';
@@ -54,25 +56,20 @@ export default function AdminRooms() {
         const [savedRowId, setSavedRowId] = useState(null);
 
         // ===== State for hours =====
-        // Hours loaded from DB (explicit, exact open slots)
         // { [roomId]: Array<{weekday,startHHMM,endHHMM}> }
         const [explicitHours, setExplicitHours] = useState({});
-        // Day mode (default = all green unless closed; explicit = trust explicitHours)
         // { [roomId]: { [weekday]: 'default' | 'explicit' } }
         const [dayMode, setDayMode] = useState({});
-        // For default days, track only the slots the admin explicitly CLOSED
         // { [roomId]: { [weekday]: Set<slotKey> } }
         const [closedSlots, setClosedSlots] = useState({});
 
-        // In-use info per room/day/slot: { [roomId]: { [weekday]: { [slotKey]: { professor, course } } } }
+        // In-use info: { [roomId]: { [weekday]: { [slotKey]: { professor, course } } } }
         const [inUseText, setInUseText] = useState({});
 
-        // Inline editor state for setting "in use"
-        // { roomId, wday, slotKey, slot, professor, course } | null
+        // Inline editor state
         const [editing, setEditing] = useState(null);
 
-        // Confirm-cancel modal state for clearing an in-use slot
-        // { roomId, wday, slot, slotKey, info } | null
+        // Confirm cancel modal
         const [confirmCancel, setConfirmCancel] = useState(null);
 
         // Load buildings
@@ -128,20 +125,44 @@ export default function AdminRooms() {
                                 const list = Array.isArray(rooms) ? rooms : [];
                                 setRooms(list);
 
-                                const entries = await Promise.all(
+                                // OPEN HOURS
+                                const hourEntries = await Promise.all(
                                         list.map(async (r) => {
-                                                const hrs = await getRoomOpenHours(r.id).catch(() => []);
+                                                const hrs = await getRoomOpenHours(token, r.id).catch(() => []);
                                                 return [r.id, Array.isArray(hrs) ? hrs : []];
                                         })
                                 );
+                                setExplicitHours(Object.fromEntries(hourEntries));
 
-                                // Build explicitHours map
-                                const byRoom = Object.fromEntries(entries);
-                                setExplicitHours(byRoom);
+                                // SLOT NOTES
+                                const noteEntries = await Promise.all(
+                                        list.map(async (r) => {
+                                                const ns = await getRoomSlotNotes(token, r.id).catch(() => []);
+                                                return [r.id, Array.isArray(ns) ? ns : []];
+                                        })
+                                );
 
-                                // Build dayMode: explicit if any entry exists for that day, else default
+                                // Convert notes → inUseText shape
+                                const notesMap = {};
+                                for (const [rId, arr] of noteEntries) {
+                                        for (const n of arr) {
+                                                const slot = TIME_SLOTS.find(
+                                                        s => s.startHHMM === n.startHHMM && s.endHHMM === n.endHHMM
+                                                );
+                                                if (!slot) continue;
+                                                notesMap[rId] = notesMap[rId] || {};
+                                                notesMap[rId][n.weekday] = notesMap[rId][n.weekday] || {};
+                                                notesMap[rId][n.weekday][slot.key] = {
+                                                        professor: n.professor || '',
+                                                        course: n.course || ''
+                                                };
+                                        }
+                                }
+                                setInUseText(notesMap);
+
+                                // Day mode per room/day
                                 const nextMode = {};
-                                for (const [rid, hrs] of entries) {
+                                for (const [rid, hrs] of hourEntries) {
                                         nextMode[rid] = nextMode[rid] || {};
                                         for (let d = 1; d <= 6; d++) {
                                                 nextMode[rid][d] = hrs.some(h => h.weekday === d) ? 'explicit' : 'default';
@@ -149,9 +170,8 @@ export default function AdminRooms() {
                                 }
                                 setDayMode(nextMode);
 
-                                // Reset per-floor transient state
+                                // Reset transient toggles
                                 setClosedSlots({});
-                                setInUseText({});
                                 setEditing(null);
                         } catch (e) {
                                 setErr(e.message || 'Failed to load rooms');
@@ -247,9 +267,6 @@ export default function AdminRooms() {
                 });
         }
 
-        // Clicking a slot:
-        // - If currently available -> open 2-field editor to set "in use"
-        // - If currently in use -> open confirm modal to cancel class (make available)
         function handleClickSlot(roomId, wday, slot, available) {
                 if (available) {
                         const existing = getSlotInfo(roomId, wday, slot.key) || { professor: '', course: '' };
@@ -274,14 +291,11 @@ export default function AdminRooms() {
         function saveEditing() {
                 if (!editing) return;
                 const { roomId, wday, slot, slotKey, professor, course } = editing;
-                // Persist the "in-use" choice in local state
                 setSlotInfo(roomId, wday, slotKey, { professor, course });
 
                 if (isExplicit(roomId, wday)) {
-                        // Mark as in use by removing this slot from explicitHours
                         removeExplicitSlot(roomId, wday, slot);
                 } else {
-                        // Mark as in use by adding this slot to closedSlots
                         addClosed(roomId, wday, slotKey);
                 }
                 setEditing(null);
@@ -295,7 +309,6 @@ export default function AdminRooms() {
                 if (!confirmCancel) return;
                 const { roomId, wday, slot, slotKey } = confirmCancel;
 
-                // Make it available (confirm action)
                 if (isExplicit(roomId, wday)) {
                         addExplicitSlot(roomId, wday, slot);
                 } else {
@@ -306,39 +319,163 @@ export default function AdminRooms() {
                 setConfirmCancel(null);
         }
 
+        // async function saveRoomHours(roomId) {
+        //         try {
+        //                 setSavingRowId(roomId);
+        //                 setSavedRowId(null);
+
+        //                 // Build final open-hours payload
+        //                 const base = explicitHours[roomId] || [];
+        //                 const out = [...base];
+
+        //                 const roomClosed = closedSlots[roomId] || {};
+        //                 for (let d = 1; d <= 6; d++) {
+        //                         if (dayMode[roomId]?.[d] === 'default') {
+        //                                 const closedSet = roomClosed[d];
+        //                                 if (closedSet && closedSet.size > 0) {
+        //                                         TIME_SLOTS.forEach(s => {
+        //                                                 if (!closedSet.has(s.key)) {
+        //                                                         out.push({ weekday: d, startHHMM: s.startHHMM, endHHMM: s.endHHMM });
+        //                                                 }
+        //                                         });
+        //                                 }
+        //                         }
+        //                 }
+
+        //                 // Build notes payload
+        //                 const notesOut = [];
+        //                 const roomNotes = inUseText[roomId] || {};
+        //                 for (const [wdStr, slots] of Object.entries(roomNotes)) {
+        //                         const wday = Number(wdStr);
+        //                         for (const [slotKey, info] of Object.entries(slots)) {
+        //                                 const s = TIME_SLOTS.find(x => x.key === slotKey);
+        //                                 if (!s) continue;
+        //                                 notesOut.push({
+        //                                         weekday: wday,
+        //                                         startHHMM: s.startHHMM,
+        //                                         endHHMM: s.endHHMM,
+        //                                         professor: info.professor || '',
+        //                                         course: info.course || ''
+        //                                 });
+        //                         }
+        //                 }
+
+        //                 await Promise.all([
+        //                         setRoomOpenHours(token, roomId, out),
+        //                         setRoomSlotNotes(token, roomId, notesOut),
+        //                 ]);
+
+        //                 // Reload to sync local state
+        //                 const fresh = await getRoomOpenHours(token, roomId).catch(() => []);
+        //                 setExplicitHours(prev => ({ ...prev, [roomId]: fresh }));
+
+        //                 setDayMode(prev => {
+        //                         const nm = { ...(prev[roomId] || {}) };
+        //                         for (let d = 1; d <= 6; d++) {
+        //                                 nm[d] = fresh.some(h => h.weekday === d) ? 'explicit' : 'default';
+        //                         }
+        //                         return { ...prev, [roomId]: nm };
+        //                 });
+
+        //                 const freshNotes = await getRoomSlotNotes(token, roomId).catch(() => []);
+        //                 setInUseText(prev => {
+        //                         const copy = { ...prev };
+        //                         const roomMap = {};
+        //                         for (const n of freshNotes) {
+        //                                 const slot = TIME_SLOTS.find(s => s.startHHMM === n.startHHMM && s.endHHMM === n.endHHMM);
+        //                                 if (!slot) continue;
+        //                                 roomMap[n.weekday] = roomMap[n.weekday] || {};
+        //                                 roomMap[n.weekday][slot.key] = { professor: n.professor || '', course: n.course || '' };
+        //                         }
+        //                         copy[roomId] = roomMap;
+        //                         return copy;
+        //                 });
+
+        //                 setClosedSlots(prev => {
+        //                         const copy = { ...prev };
+        //                         delete copy[roomId];
+        //                         return copy;
+        //                 });
+
+        //                 setSavedRowId(roomId);
+        //                 setTimeout(() => setSavedRowId(null), 1200);
+        //         } catch (e) {
+        //                 alert(e.message || 'Failed to save hours');
+        //         } finally {
+        //                 setSavingRowId(null);
+        //         }
+        // }
+
         async function saveRoomHours(roomId) {
                 try {
                         setSavingRowId(roomId);
                         setSavedRowId(null);
 
-                        // Build final list to persist:
-                        // - For explicit days: take explicitHours as-is for that day
-                        // - For default days: all slots except ones in closedSlots
+                        // Build final open-hours payload
                         const base = explicitHours[roomId] || [];
-                        const out = [...base]; // copy explicit entries for any days in 'explicit' mode
+                        const out = [...base];
 
-                        // Add computed opens for default days that have any closed toggles
                         const roomClosed = closedSlots[roomId] || {};
+                        const SENT_START = '00:00';
+                        const SENT_END = '00:01';
+
                         for (let d = 1; d <= 6; d++) {
-                                if (dayMode[roomId]?.[d] === 'default') {
+                                if (dayMode[roomId]?.[d] === 'explicit') {
+                                        // If the day is explicit but has no slots left, add a sentinel to keep it explicit.
+                                        const hasAny = base.some(h => h.weekday === d);
+                                        if (!hasAny) {
+                                                out.push({ weekday: d, startHHMM: SENT_START, endHHMM: SENT_END });
+                                        }
+                                } else {
+                                        // default mode: encode "closed" with either explicit allowed slots or a sentinel if all closed
                                         const closedSet = roomClosed[d];
                                         if (closedSet && closedSet.size > 0) {
-                                                // open = all except closed
-                                                TIME_SLOTS.forEach(s => {
-                                                        if (!closedSet.has(s.key)) {
-                                                                out.push({ weekday: d, startHHMM: s.startHHMM, endHHMM: s.endHHMM });
-                                                        }
-                                                });
+                                                if (closedSet.size === TIME_SLOTS.length) {
+                                                        out.push({ weekday: d, startHHMM: SENT_START, endHHMM: SENT_END });
+                                                } else {
+                                                        TIME_SLOTS.forEach(s => {
+                                                                if (!closedSet.has(s.key)) {
+                                                                        out.push({ weekday: d, startHHMM: s.startHHMM, endHHMM: s.endHHMM });
+                                                                }
+                                                        });
+                                                }
                                         }
-                                        // If there are no closed toggles for this default day, we don't persist anything;
-                                        // it stays "default all-green" next time we load.
                                 }
                         }
 
-                        await setRoomOpenHours(token, roomId, out);
+                        // Deduplicate just in case
+                        const uniq = [];
+                        const seen = new Set();
+                        for (const h of out) {
+                                const k = `${h.weekday}-${h.startHHMM}-${h.endHHMM}`;
+                                if (!seen.has(k)) { seen.add(k); uniq.push(h); }
+                        }
 
-                        // After saving, reload this room's hours to sync display + modes
-                        const fresh = await getRoomOpenHours(roomId).catch(() => []);
+                        // Build notes payload
+                        const notesOut = [];
+                        const roomNotes = inUseText[roomId] || {};
+                        for (const [wdStr, slots] of Object.entries(roomNotes)) {
+                                const wday = Number(wdStr);
+                                for (const [slotKey, info] of Object.entries(slots)) {
+                                        const s = TIME_SLOTS.find(x => x.key === slotKey);
+                                        if (!s) continue;
+                                        notesOut.push({
+                                                weekday: wday,
+                                                startHHMM: s.startHHMM,
+                                                endHHMM: s.endHHMM,
+                                                professor: info.professor || '',
+                                                course: info.course || ''
+                                        });
+                                }
+                        }
+
+                        await Promise.all([
+                                setRoomOpenHours(token, roomId, uniq),
+                                setRoomSlotNotes(token, roomId, notesOut),
+                        ]);
+
+                        // Reload to sync local state
+                        const fresh = await getRoomOpenHours(token, roomId).catch(() => []);
                         setExplicitHours(prev => ({ ...prev, [roomId]: fresh }));
 
                         setDayMode(prev => {
@@ -349,7 +486,21 @@ export default function AdminRooms() {
                                 return { ...prev, [roomId]: nm };
                         });
 
-                        // Clear closed toggles for this room (they're now encoded in explicit hours if any)
+                        const freshNotes = await getRoomSlotNotes(token, roomId).catch(() => []);
+                        setInUseText(prev => {
+                                const copy = { ...prev };
+                                const roomMap = {};
+                                for (const n of freshNotes) {
+                                        const slot = TIME_SLOTS.find(s => s.startHHMM === n.startHHMM && s.endHHMM === n.endHHMM);
+                                        if (!slot) continue;
+                                        roomMap[n.weekday] = roomMap[n.weekday] || {};
+                                        roomMap[n.weekday][slot.key] = { professor: n.professor || '', course: n.course || '' };
+                                }
+                                copy[roomId] = roomMap;
+                                return copy;
+                        });
+
+                        // Clear transient toggles for this room
                         setClosedSlots(prev => {
                                 const copy = { ...prev };
                                 delete copy[roomId];
@@ -365,7 +516,7 @@ export default function AdminRooms() {
                 }
         }
 
-        // Single-line ellipsis helper (used for both lines)
+
         const lineEllipsis = {
                 display: 'block',
                 width: '100%',
@@ -454,18 +605,8 @@ export default function AdminRooms() {
                                                         <div className="table-responsive">
                                                                 <table
                                                                         className="table table-striped table-hover align-middle"
-                                                                        style={{ tableLayout: 'fixed', width: '100%' }}   // ← equalize slot column widths
+                                                                        style={{ tableLayout: 'fixed', width: '100%' }}
                                                                 >
-                                                                        <thead>
-                                                                                <tr>
-                                                                                        <th style={{ width: 180, padding: '5px' }}>Room</th>
-                                                                                        {TIME_SLOTS.map(s => (
-                                                                                                <th key={s.key} className="text-center" style={{ padding: '5px' }}>{s.label}</th>
-                                                                                        ))}
-                                                                                        <th style={{ width: 120, padding: '5px' }}></th>
-                                                                                </tr>
-                                                                        </thead>
-
                                                                         <tbody>
                                                                                 {rooms.length === 0 ? (
                                                                                         <tr>
@@ -495,21 +636,20 @@ export default function AdminRooms() {
                                                                                                                                         title={available ? 'Available (click to set In use)' : titleWhenInUse}
                                                                                                                                         style={{
                                                                                                                                                 width: '100%',
-                                                                                                                                                height: SLOT_BTN_HEIGHT,                 // ← uniform height
+                                                                                                                                                height: SLOT_BTN_HEIGHT,
                                                                                                                                                 backgroundColor: available ? BRAND : IN_USE,
                                                                                                                                                 borderColor: available ? BRAND : IN_USE,
                                                                                                                                                 display: 'flex',
-                                                                                                                                                flexDirection: 'column',                  // ← two-line stack
-                                                                                                                                                alignItems: 'center',                     // ← center horizontally
-                                                                                                                                                justifyContent: 'center',                 // ← center vertically
+                                                                                                                                                flexDirection: 'column',
+                                                                                                                                                alignItems: 'center',
+                                                                                                                                                justifyContent: 'center',
                                                                                                                                                 paddingTop: 3,
                                                                                                                                                 paddingBottom: 3,
-                                                                                                                                                textAlign: 'center',                      // ← center text
+                                                                                                                                                textAlign: 'center',
                                                                                                                                                 overflow: 'hidden',
                                                                                                                                         }}
                                                                                                                                 >
                                                                                                                                         {available ? (
-                                                                                                                                                // Available state: keep same layout & height for balance
                                                                                                                                                 <span
                                                                                                                                                         style={{
                                                                                                                                                                 ...lineEllipsis,
@@ -521,7 +661,6 @@ export default function AdminRooms() {
                                                                                                                                                         {s.label}
                                                                                                                                                 </span>
                                                                                                                                         ) : (
-                                                                                                                                                // In-use state: Professor (top), Course (bottom), both small with ellipsis
                                                                                                                                                 <span className="d-block w-100">
                                                                                                                                                         <span
                                                                                                                                                                 style={{
@@ -573,15 +712,12 @@ export default function AdminRooms() {
                                 </main>
                         </div>
 
-                        {/* ===== Inline 2-field editor (simple modal) ===== */}
+                        {/* ===== Inline 2-field editor ===== */}
                         {editing && (
                                 <div
                                         className="position-fixed top-0 start-0 w-100 h-100"
                                         style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1060 }}
-                                        onClick={(e) => {
-                                                // click backdrop only
-                                                if (e.target === e.currentTarget) cancelEditing();
-                                        }}
+                                        onClick={(e) => { if (e.target === e.currentTarget) cancelEditing(); }}
                                 >
                                         <div
                                                 className="position-absolute top-50 start-50 translate-middle card shadow"
@@ -602,7 +738,7 @@ export default function AdminRooms() {
                                                                         className="form-control form-control-sm"
                                                                         value={editing.professor}
                                                                         onChange={(e) => setEditing(ed => ({ ...ed, professor: e.target.value }))}
-                                                                        placeholder="e.g., Dr. Sokha"
+                                                                        placeholder="e.g., Dr. Sokhey"
                                                                 />
                                                         </div>
                                                         <div className="mb-3">
@@ -629,14 +765,12 @@ export default function AdminRooms() {
                                 </div>
                         )}
 
-                        {/* ===== Confirm-cancel modal (when clicking an in-use slot) ===== */}
+                        {/* ===== Confirm-cancel modal ===== */}
                         {confirmCancel && (
                                 <div
                                         className="position-fixed top-0 start-0 w-100 h-100"
                                         style={{ background: 'rgba(0,0,0,0.5)', zIndex: 1060 }}
-                                        onClick={(e) => {
-                                                if (e.target === e.currentTarget) confirmCancelNo();
-                                        }}
+                                        onClick={(e) => { if (e.target === e.currentTarget) confirmCancelNo(); }}
                                 >
                                         <div
                                                 className="position-absolute top-50 start-50 translate-middle card shadow"

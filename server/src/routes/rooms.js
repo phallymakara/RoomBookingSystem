@@ -3,6 +3,7 @@ import express from 'express';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+
 const router = express.Router();
 
 /* ---------------------- helpers ---------------------- */
@@ -246,5 +247,124 @@ router.get('/grouped', async (req, res) => {
                 res.status(500).json({ error: 'Failed to load grouped rooms' });
         }
 });
+
+/* ---------------------- NEW: weekly slot notes ---------------------- */
+/**
+ * Model used below: prisma.roomSlotNote with fields:
+ * - roomId (FK to room.id), weekday (1-6), startHHMM, endHHMM, professor?, course?
+ */
+
+// GET /rooms/:roomId/slot-notes
+router.get('/:roomId/slot-notes', requireAuth, async (req, res) => {
+        try {
+                const { roomId } = req.params;
+                const notes = await prisma.roomSlotNote.findMany({
+                        where: { roomId },
+                        orderBy: [{ weekday: 'asc' }, { startHHMM: 'asc' }],
+                });
+                res.json(notes);
+        } catch (e) {
+                res.status(500).json({ error: 'Failed to load slot notes' });
+        }
+});
+
+// PUT /rooms/:roomId/slot-notes   [ {weekday,startHHMM,endHHMM,professor?,course?}, ... ]
+const slotNoteSchema = z.array(z.object({
+        weekday: z.coerce.number().int().min(1).max(6),
+        startHHMM: z.string().regex(/^\d{2}:\d{2}$/),
+        endHHMM: z.string().regex(/^\d{2}:\d{2}$/),
+        professor: z.string().optional().default(''),
+        course: z.string().optional().default(''),
+})).default([]);
+
+router.put('/:roomId/slot-notes', requireAuth, requireRole('ADMIN'), async (req, res) => {
+        const { roomId } = req.params;
+
+        try {
+                const parsed = slotNoteSchema.parse(Array.isArray(req.body) ? req.body : []);
+                // normalize/trim text fields
+                const valid = parsed.map(n => ({
+                        weekday: n.weekday,
+                        startHHMM: n.startHHMM,
+                        endHHMM: n.endHHMM,
+                        professor: (n.professor || '').trim(),
+                        course: (n.course || '').trim(),
+                }));
+
+                await prisma.$transaction([
+                        prisma.roomSlotNote.deleteMany({ where: { roomId } }),
+                        ...(valid.length
+                                ? [prisma.roomSlotNote.createMany({
+                                        data: valid.map(n => ({ roomId, ...n })),
+                                        skipDuplicates: true,
+                                })]
+                                : []),
+                ]);
+
+                res.status(204).end();
+        } catch (e) {
+                if (e instanceof z.ZodError) {
+                        return res.status(400).json({ error: e.errors?.[0]?.message || 'Invalid payload' });
+                }
+                if (e?.code === 'P2003') {
+                        return res.status(400).json({ error: 'Invalid roomId' });
+                }
+                console.error(e);
+                res.status(500).json({ error: 'Failed to save slot notes' });
+        }
+});
+
+// --- OPEN HOURS ---
+// GET /rooms/:roomId/open-hours  (public read)
+router.get('/:roomId/open-hours', async (req, res) => {
+        try {
+                const { roomId } = req.params;
+                const rows = await prisma.roomOpenHour.findMany({
+                        where: { roomId },
+                        orderBy: [{ weekday: 'asc' }, { startHHMM: 'asc' }],
+                        select: { weekday: true, startHHMM: true, endHHMM: true },
+                });
+                res.json(rows);
+        } catch (e) {
+                res.status(500).json({ error: 'Failed to load open hours' });
+        }
+});
+
+const openHourSchema = z.array(z.object({
+        weekday: z.coerce.number().int().min(1).max(6), // Mon..Sat to match your UI
+        startHHMM: z.string().regex(/^\d{2}:\d{2}$/),
+        endHHMM: z.string().regex(/^\d{2}:\d{2}$/),
+})).default([]);
+
+// PUT /rooms/:roomId/open-hours  (admin write)
+router.put('/:roomId/open-hours', requireAuth, requireRole('ADMIN'), async (req, res) => {
+        const { roomId } = req.params;
+        try {
+                const parsed = openHourSchema.parse(Array.isArray(req.body) ? req.body : []);
+                const valid = parsed.map(h => ({
+                        weekday: h.weekday,    // 1..6 = Mon..Sat (consistent with UI & RoomSlotNote)
+                        startHHMM: h.startHHMM,
+                        endHHMM: h.endHHMM,
+                }));
+
+                await prisma.$transaction([
+                        prisma.roomOpenHour.deleteMany({ where: { roomId } }),
+                        ...(valid.length
+                                ? [prisma.roomOpenHour.createMany({
+                                        data: valid.map(h => ({ roomId, ...h })),
+                                        skipDuplicates: true,
+                                })]
+                                : []),
+                ]);
+
+                res.status(204).end();
+        } catch (e) {
+                if (e instanceof z.ZodError) {
+                        return res.status(400).json({ error: e.errors?.[0]?.message || 'Invalid payload' });
+                }
+                res.status(500).json({ error: 'Failed to save open hours' });
+        }
+});
+
 
 export default router;

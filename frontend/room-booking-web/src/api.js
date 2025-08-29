@@ -127,8 +127,11 @@ export async function setRoomOpenHours(token, roomId, hours /* [{weekday,startHH
         return true;
 }
 
-export async function getRoomOpenHours(roomId) {
-        const res = await fetch(`${BASE}/rooms/${roomId}/open-hours`);
+// getRoomOpenHours: (token, roomId) OR (roomId)
+export async function getRoomOpenHours(tokenOrRoomId, maybeRoomId) {
+        const roomId = maybeRoomId || tokenOrRoomId;
+        const headers = maybeRoomId ? { Authorization: `Bearer ${tokenOrRoomId}` } : undefined;
+        const res = await fetch(`${BASE}/rooms/${roomId}/open-hours`, { headers });
         return handle(res);
 }
 
@@ -298,4 +301,22 @@ export async function deleteRoom(token, roomId) {
         });
         if (res.status === 204) return true;
         return handle(res);
+}
+
+// getRoomSlotNotes: (token, roomId) OR (roomId)
+export async function getRoomSlotNotes(tokenOrRoomId, maybeRoomId) {
+        const roomId = maybeRoomId || tokenOrRoomId;
+        const headers = maybeRoomId ? { Authorization: `Bearer ${tokenOrRoomId}` } : undefined;
+        const res = await fetch(`${BASE}/rooms/${roomId}/slot-notes`, { headers });
+        return handle(res);
+}
+
+export async function setRoomSlotNotes(token, roomId, notes /* array */) {
+        const res = await fetch(`${BASE}/rooms/${roomId}/slot-notes`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify(notes || []),
+        });
+        if (!res.ok && res.status !== 204) return handle(res);
+        return true;
 }
